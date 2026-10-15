@@ -54,6 +54,8 @@ struct Preferences: Codable {
     var backEnabled = true
     var forwardHoldEnabled = false
     var topZoomEnabled = true
+    var thumbGesturesEnabled = true
+    var thumbSensitivity = 1.0
     var zoomSensitivity = 2.0
     var topClickAction = TopClickAction.smartZoom
     var topClickShortcut: Shortcut?
@@ -68,6 +70,7 @@ struct Preferences: Codable {
         if forwardEnabled { result.insert(.forward) }
         if backEnabled { result.insert(.back) }
         if topZoomEnabled { result.insert(.top) }
+        if thumbGesturesEnabled { result.insert(.thumb) }
         return result
     }
 
@@ -77,6 +80,7 @@ struct Preferences: Codable {
         case topClickAction, topClickShortcut
         case backEnabled, forwardHoldEnabled
         case resumeMappings
+        case thumbGesturesEnabled, thumbSensitivity
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -89,6 +93,8 @@ struct Preferences: Codable {
         forwardHoldEnabled =
             try values.decodeIfPresent(Bool.self, forKey: .forwardHoldEnabled) ?? (shortcut != nil)
         topZoomEnabled = try values.decodeIfPresent(Bool.self, forKey: .topZoomEnabled) ?? true
+        thumbGesturesEnabled = try values.decodeIfPresent(Bool.self, forKey: .thumbGesturesEnabled) ?? true
+        thumbSensitivity = try values.decodeIfPresent(Double.self, forKey: .thumbSensitivity) ?? 1
         zoomSensitivity = try values.decodeIfPresent(Double.self, forKey: .zoomSensitivity) ?? 2
         topClickAction =
             try values.decodeIfPresent(TopClickAction.self, forKey: .topClickAction) ?? .smartZoom
@@ -103,6 +109,8 @@ struct Preferences: Codable {
         value.holdMilliseconds = min(1500, max(150, value.holdMilliseconds))
         if !value.zoomSensitivity.isFinite { value.zoomSensitivity = 2 }
         value.zoomSensitivity = min(6, max(0.25, value.zoomSensitivity))
+        if !value.thumbSensitivity.isFinite { value.thumbSensitivity = 1 }
+        value.thumbSensitivity = min(3, max(0.25, value.thumbSensitivity))
         return value
     }
     func save() {
@@ -116,15 +124,24 @@ enum KeyboardOutput {
     static let forward = Shortcut(keyCode: 30, modifiers: CGEventFlags.maskCommand.rawValue, keyLabel: "]")
     static let back = Shortcut(keyCode: 33, modifiers: CGEventFlags.maskCommand.rawValue, keyLabel: "[")
     static func send(_ shortcut: Shortcut) -> Bool {
-        guard AXIsProcessTrusted(),
-            let source = CGEventSource(stateID: .privateState),
-            let down = CGEvent(keyboardEventSource: source, virtualKey: shortcut.keyCode, keyDown: true),
-            let up = CGEvent(keyboardEventSource: source, virtualKey: shortcut.keyCode, keyDown: false)
-        else { return false }
-        down.flags = CGEventFlags(rawValue: shortcut.modifiers)
-        up.flags = down.flags
+        guard AXIsProcessTrusted(), let (down, up) = events(for: shortcut) else { return false }
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
         return true
+    }
+
+    static func events(for shortcut: Shortcut) -> (CGEvent, CGEvent)? {
+        guard let source = CGEventSource(stateID: .privateState),
+            let down = CGEvent(keyboardEventSource: source, virtualKey: shortcut.keyCode, keyDown: true),
+            let up = CGEvent(keyboardEventSource: source, virtualKey: shortcut.keyCode, keyDown: false)
+        else { return nil }
+        var flags = CGEventFlags(rawValue: shortcut.modifiers)
+        // Arrow keys carry these flags on a physical keyboard too.
+        if (123...126).contains(shortcut.keyCode) {
+            flags.formUnion([.maskNumericPad, .maskSecondaryFn])
+        }
+        down.flags = flags
+        up.flags = flags
+        return (down, up)
     }
 }

@@ -1,6 +1,11 @@
 import ForwardCore
 
 final class ControlReportingTests {
+    func testThumbClaimsAndRestoresRawMovement() {
+        let settings = ControlReporting([0, 195, 0, 0, 195], control: .thumb)!
+        expectEqual(settings.parameters(divert: true), [0, 195, 0x3B, 0, 195])
+        expectEqual(settings.parameters(divert: false), [0, 195, 0x2A, 0, 195])
+    }
     func testBackReportingPreservesRemapAndDisablesRawMovement() {
         let settings = ControlReporting([0, 83, 0x31, 0xAB, 0xCD], control: .back)!
         expectEqual(settings.parameters(divert: true), [0, 83, 0x2B, 0xAB, 0xCD])

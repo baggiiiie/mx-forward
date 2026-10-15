@@ -27,6 +27,8 @@ final class AppModel: ObservableObject {
     private let mouse = BoltMouse()
     private var sideButtons = SideButtonInterpreter()
     private var zoom = ZoomInterpreter()
+    private var thumb = ThumbGestureInterpreter()
+    private var movementButtons = MovementButtons()
     private var zoomAnchor = CGPoint.zero
     private var zoomTestWindow: ZoomTestWindow?
 
@@ -53,7 +55,12 @@ final class AppModel: ObservableObject {
         mouse.onPress = { [weak self] control, down in self?.physicalPress(control, down: down) }
         mouse.onMovement = { [weak self] dx, dy in
             guard let self, self.enabled else { return }
-            self.performZoom(self.zoom.move(dx: dx, dy: dy))
+            switch self.movementButtons.active {
+            case .top: self.performZoom(self.zoom.move(dx: dx, dy: dy))
+            case .thumb:
+                if let action = self.thumb.move(dx: dx, dy: dy) { self.performThumb(action) }
+            default: break
+            }
         }
         mouse.onDisconnect = { [weak self] in
             self?.operationEpoch += 1
@@ -256,6 +263,8 @@ final class AppModel: ObservableObject {
 
     private func cancelInput() {
         performZoom(zoom.cancel())
+        thumb.cancel()
+        movementButtons.cancel()
         holdTask?.cancel()
         holdTask = nil
         sideButtons.cancel()
@@ -263,18 +272,8 @@ final class AppModel: ObservableObject {
 
     private func physicalPress(_ control: MouseControl, down: Bool) {
         guard enabled else { return }
-        if control == .top {
-            if down {
-                guard !zoom.isPressed else { return }
-                zoomAnchor = CGEvent(source: nil)?.location ?? .zero
-                zoom.down(
-                    sensitivity: preferences.zoomSensitivity,
-                    discardFirstReport: mouse.connection?.discardFirstMovement ?? false)
-                lastAction = "Top button pressed…"
-                append("Top button down")
-            } else {
-                performZoom(zoom.up())
-            }
+        if control.reportsMovement {
+            movementPress(control, down: down)
             return
         }
         guard down != sideButtons.isPressed(control) else { return }
@@ -298,6 +297,41 @@ final class AppModel: ObservableObject {
         } else {
             holdTask?.cancel()
             holdTask = nil
+        }
+    }
+
+    private func movementPress(_ control: MouseControl, down: Bool) {
+        guard let transition = movementButtons.update(control, down: down) else { return }
+        switch transition {
+        case .begin(let button):
+            let discardFirst = mouse.connection?.discardFirstMovement ?? false
+            if button == .top {
+                zoomAnchor = CGEvent(source: nil)?.location ?? .zero
+                zoom.down(sensitivity: preferences.zoomSensitivity, discardFirstReport: discardFirst)
+            } else {
+                thumb.down(sensitivity: preferences.thumbSensitivity, discardFirstReport: discardFirst)
+            }
+            lastAction = "\(button.name) pressed…"
+        case .finish(let button):
+            if button == .top {
+                performZoom(zoom.up())
+            } else if let action = thumb.up() {
+                performThumb(action)
+            }
+        case .cancel:
+            performZoom(zoom.cancel())
+            thumb.cancel()
+            append("Gesture cancelled: both gesture buttons were pressed")
+        }
+    }
+
+    private func performThumb(_ action: ThumbGestureInterpreter.Action) {
+        let label = WindowNavigationOutput.label(action)
+        lastAction = (preferences.testMode ? "Test: " : "") + "Thumb → \(label)"
+        append(lastAction)
+        guard !preferences.testMode else { return }
+        if !WindowNavigationOutput.send(action) {
+            status = "Could not send \(label). Check Accessibility and macOS Mission Control shortcuts."
         }
     }
 

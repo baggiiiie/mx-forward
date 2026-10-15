@@ -6,13 +6,14 @@ A small native macOS app for the MX Master 3S with a **Logi Bolt USB receiver**.
 - Click Back: sends **⌘[** when you release the button.
 - Optional Forward hold: sends your recorded shortcut once, without also going Forward. With hold off, even a long press navigates once on release.
 - Adjustable hold delay (150–1500 ms, initially 400 ms).
+- Thumb-button window navigation: click/up opens Mission Control, down opens App Exposé, and left/right switches desktops. Gesture sensitivity is adjustable.
 - Top button: choose Smart Zoom, a recorded keyboard shortcut, or no action for a click. Hold and move up/down for continuous pinch zoom.
 - Horizontal top-button movement does not rotate or trigger smart zoom.
 - Separate feature toggles let you test zoom without configuring Forward. Hold zoom speed ranges from 25–600%, initially 200%.
 - Test mode shows actions without sending them. Pause restores the selected buttons.
 - Automatic discovery on launch, wake, and reconnect. After you Enable once, mappings resume automatically; an explicit Pause keeps them off.
 
-The app talks directly to the Bolt receiver. Logitech's device agent must stay stopped; there is no Logitech runtime dependency. Thumb-button window gestures, rotation, and hardware-settings controls are not implemented yet.
+The app talks directly to the Bolt receiver. Logitech's device agent must stay stopped; there is no Logitech runtime dependency. Rotation and hardware-settings controls are not implemented yet.
 
 ## Build
 
@@ -44,15 +45,16 @@ Quit MX Forward before rebuilding. Builds are ad-hoc signed by default; macOS ma
 ./scripts/logitech-session.sh start
 ```
 
-The script stops/restores Logitech for the current login session; it does not uninstall it or change automatic startup. It expects the standard Logitech LaunchAgent. Use `./scripts/logitech-session.sh status` to check it.
+The stop command disables Logitech's automatic launch and stops its device agent. This persists across logins until the start command restores automatic launch and the agent. It expects the standard Logitech LaunchAgent. Use `./scripts/logitech-session.sh status` to check it.
 
 ## Behavior and recovery
 
 - Side-button navigation sends **⌘[** for Back and **⌘]** for Forward. These use US bracket keycodes; apps or keyboard layouts with different navigation shortcuts may behave differently.
+- Thumb gestures use your macOS Mission Control and desktop-switching keyboard shortcuts, including custom bindings. Disabled shortcuts stay disabled. Each press triggers one action when movement crosses the gesture threshold; release before the next gesture. Holding both gesture buttons cancels their gestures until both are released.
 - Shortcuts store a keycode and modifiers and target the active app when they fire. Pause before changing the mapping.
 - Closing the window keeps the app in the menu bar, where you can Pause or Quit.
 - Sleep, disconnect, permission loss, or a restarted Logitech agent suspends the mapping. It reconnects and resumes once the mouse and permissions are available and Logitech's agent is stopped. Explicit Pause disables automatic resume; Enable turns it back on. Quit restores the hardware while preserving this choice for the next launch.
-- Pause and Quit clear diversion for the selected buttons and preserve their current hardware remap targets. Top-button raw movement reporting is also cleared. Sleep cleanup sends restoration commands without waiting for replies.
+- Pause and Quit clear diversion for the selected buttons and preserve their current hardware remap targets. Raw movement reporting is also cleared for both gesture buttons. Sleep cleanup sends restoration commands without waiting for replies.
 - Zoom uses native magnification and smart-zoom events, not Command-plus/minus. An app must support those gestures. The adapter uses undocumented macOS gesture fields, so compatibility is verified against the installed OS. The sensitivity control tunes movement distance; exact Logitech sensitivity has not been measured.
 - On button-feature version 5 and later, the first raw movement report is discarded to avoid the MX Master 3S stale-movement jump. A small dead zone separates clicks from gestures.
 - After a crash, forced quit, or failed restoration, **turn the mouse off and on**. The app reconnects automatically; click Enable if you previously paused it.
@@ -60,7 +62,7 @@ The script stops/restores Logitech for the current login session; it does not un
 
 ## Validation
 
-The 38 core checks cover independent Forward/Back clicks, simultaneous Back presses during a Forward hold, duplicate reports, cancellation, Forward timing, continuous zoom phases, reversal, horizontal suppression, jitter, the stale first-report filter, signed movement parsing, and button reporting. macOS also decodes the generated events as native magnify / smart-magnify events with the expected phases.
+The 51 core checks cover independent Forward/Back clicks, Forward holds, thumb gestures in all directions, overlapping gesture buttons, cancellation, continuous zoom, jitter, the stale first-report filter, signed movement parsing, and button reporting. macOS also decodes the generated events as native magnify / smart-magnify events with the expected phases.
 
 Run the optional hardware checks with MX Forward quit, Logitech's device agent stopped, and an awake MX Master 3S connected through Bolt:
 
@@ -68,9 +70,9 @@ Run the optional hardware checks with MX Forward quit, Logitech's device agent s
 ./scripts/check-hardware.sh
 ```
 
-These use separate test preferences and send no keyboard or zoom actions. They claim and restore the three buttons, simulate sleep/wake notifications, check that Enable is ignored during sleep, and verify Pause and quit behavior. They do not put the Mac to sleep.
+These use separate test preferences and send no keyboard or zoom actions. They check system-shortcut parsing and arrow-key event flags, claim and restore the selected buttons, simulate sleep/wake notifications, check that Enable is ignored during sleep, and verify Pause and quit behavior. They do not put the Mac to sleep.
 
-Verified on the MX Master 3S in Bolt slot 2 with button-feature version 5. Hardware checks passed, and receiver readback confirmed automatic startup claims with movement enabled only for the top button. Manual checks confirmed Back, Forward, the Forward hold shortcut, smart zoom, and held zoom at 200%. The top-button keyboard-shortcut click action has not been manually verified.
+Verified on the MX Master 3S in Bolt slot 2 with button-feature version 5. Manual checks confirmed Back, Forward, the Forward hold shortcut, smart zoom, and held zoom at 200%. Manual checks also confirmed thumb click/up for Mission Control, down for App Exposé, and left/right for desktop switching. The top-button keyboard-shortcut click action still needs a manual check.
 
 Protocol references: [MXControl's Special Keys implementation](https://github.com/wiscaksono/MXControl/blob/main/Sources/MXControlHIDPP/Features/SpecialKeysFeature.swift) and [USB transport](https://github.com/wiscaksono/MXControl/blob/main/Sources/MXControlHIDPP/Transport/USBTransport.swift). No MXControl source is included here.
 

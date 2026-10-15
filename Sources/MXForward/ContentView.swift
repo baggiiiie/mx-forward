@@ -12,7 +12,7 @@ struct ContentView: View {
                     Image(systemName: "computermouse.fill").font(.largeTitle).foregroundStyle(.tint)
                     VStack(alignment: .leading, spacing: 3) {
                         Text("MX Forward").font(.title2.weight(.semibold))
-                        Text("Forward, Back and top-button zoom").foregroundStyle(.secondary)
+                        Text("Side buttons, thumb gestures and zoom").foregroundStyle(.secondary)
                     }
                     Spacer()
                     Text("MVP · Bolt").font(.caption).foregroundStyle(.secondary)
@@ -80,6 +80,28 @@ struct ContentView: View {
                 )
                 .font(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+                GroupBox("Thumb-button gestures") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Toggle("Window navigation", isOn: $model.preferences.thumbGesturesEnabled)
+                        Text(
+                            "Click or move up: Mission Control. Move down: App Exposé. Move left/right: switch desktops."
+                        )
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        Text(
+                            "Hold the thumb button while moving. Each press performs one action using your macOS keyboard shortcuts."
+                        )
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        HStack {
+                            Text("Gesture sensitivity")
+                            Slider(value: $model.preferences.thumbSensitivity, in: 0.25...3, step: 0.05)
+                                .accessibilityLabel("Thumb gesture sensitivity")
+                            Text("\(Int(model.preferences.thumbSensitivity * 100))%")
+                                .monospacedDigit().frame(width: 48, alignment: .trailing)
+                        }
+                    }.padding(4)
+                }.disabled(model.enabled || model.busy || model.needsRelease)
                 GroupBox("Top button") {
                     VStack(alignment: .leading, spacing: 10) {
                         Toggle("Enable top button", isOn: $model.preferences.topZoomEnabled)
@@ -162,7 +184,7 @@ struct ContentView: View {
                     }.frame(height: 130)
                 }
                 Text(
-                    "Side buttons use ⌘[ and ⌘]. Top-button zoom uses native pinch events in apps that support them. Thumb-button gestures are not implemented yet."
+                    "Side buttons use ⌘[ and ⌘]. Top-button zoom uses native pinch events in apps that support them."
                 )
                 .font(.caption).foregroundStyle(.secondary)
             }

@@ -38,6 +38,7 @@ enum RunChecks {
         packet.testBothErrorFormatsMatchOriginalRequest()
         packet.testSimultaneousControlsAndRelease()
         let reporting = ControlReportingTests()
+        reporting.testThumbClaimsAndRestoresRawMovement()
         reporting.testBackReportingPreservesRemapAndDisablesRawMovement()
         reporting.testTopButtonClaimsAndClearsRawMovement()
         reporting.testRejectsMissingRemapBytes()
@@ -64,10 +65,24 @@ enum RunChecks {
         side.testBackDoesNotInterruptAForwardHold()
         side.testCancelClearsBothButtonsWithoutAnAction()
         side.testTopButtonIsIgnored()
+        let thumb = ThumbGestureTests()
+        thumb.testClickJitterAndIdle()
+        thumb.testAllDirectionsSuppressTheReleaseClick()
+        thumb.testMovementAccumulatesUntilThreshold()
+        thumb.testSensitivityChangesRequiredDistance()
+        thumb.testStaleFirstReportIsDiscarded()
+        thumb.testDuplicateDownDoesNotResetMovement()
+        thumb.testOnlyOneActionPerPress()
+        thumb.testCancelSuppressesActionsAndClearsState()
+        let movement = MovementButtonTests()
+        movement.testDuplicateEdgesAndSingleButtonRelease()
+        movement.testOverlapCancelsUntilBothButtonsAreReleased()
+        movement.testRepressingDuringOverlapDoesNotStartAnotherGesture()
+        movement.testCancelClearsOverlapAndSideButtonsAreIgnored()
         if failureCount != 0 {
             print("\(failureCount) failures")
             exit(1)
         }
-        print("PASS: 38 scenarios (side buttons, holds, zoom, HID++ reporting, native macOS event decoding)")
+        print("PASS: 51 scenarios (side buttons, thumb gestures, zoom, HID++ reporting, native macOS events)")
     }
 }

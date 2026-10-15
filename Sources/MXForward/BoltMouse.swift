@@ -173,7 +173,7 @@ final class BoltMouse {
                             let control = MouseControl(
                                 rawValue: UInt16(info.payload[0]) << 8 | UInt16(info.payload[1]))
                         else { continue }
-                        if control == .top
+                        if control.reportsMovement
                             && (info.payload.count < 9 || info.payload[8] & 1 == 0)
                         {
                             continue
@@ -234,11 +234,11 @@ final class BoltMouse {
                 _ = try await request(c.endpoint, c.slot, c.feature, 3, settings.parameters(divert: true))
                 let state = try await readReporting(control, c)
                 guard state.temporarilyDiverted, state.remap == settings.remap,
-                    state.rawMovement == (control == .top)
+                    state.rawMovement == control.reportsMovement
                 else {
                     throw MouseError.message("The mouse did not confirm control of \(control.name).")
                 }
-                onLog("Claimed \(control.name)\(control == .top ? " with raw movement" : "")")
+                onLog("Claimed \(control.name)\(control.reportsMovement ? " with raw movement" : "")")
             }
         } catch {
             // Cleanup must still run when the caller was cancelled.
@@ -290,7 +290,7 @@ final class BoltMouse {
             guard let original = claims[control] else { return false }
             let state = try await readReporting(control, c)
             guard state.temporarilyDiverted, state.remap == original.remap,
-                state.rawMovement == (control == .top)
+                state.rawMovement == control.reportsMovement
             else { return false }
         }
         return true
@@ -354,7 +354,7 @@ final class BoltMouse {
             for control in claims.keys.sorted() {
                 onPress(control, packet.pressedControls.contains(control.rawValue))
             }
-        } else if claims[.top] != nil, let movement = packet.movement {
+        } else if claims.keys.contains(where: \.reportsMovement), let movement = packet.movement {
             onMovement(movement.dx, movement.dy)
         }
     }
