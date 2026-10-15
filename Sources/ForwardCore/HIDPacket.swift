@@ -42,4 +42,12 @@ public struct HIDPacket: Equatable {
         }
         return values
     }
+
+    public var movement: (dx: Int16, dy: Int16)? {
+        guard function == 1, softwareID == 0, payload.count >= 4 else { return nil }
+        return (
+            Int16(bitPattern: UInt16(payload[0]) << 8 | UInt16(payload[1])),
+            Int16(bitPattern: UInt16(payload[2]) << 8 | UInt16(payload[3]))
+        )
+    }
 }

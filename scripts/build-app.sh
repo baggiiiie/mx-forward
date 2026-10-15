@@ -19,11 +19,11 @@ cat > "$app_path/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>MX Forward</string>
 <key>CFBundleExecutable</key><string>MXForward</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.1.0</string>
-<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleShortVersionString</key><string>0.2.0</string>
+<key>CFBundleVersion</key><string>2</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
-<key>NSInputMonitoringUsageDescription</key><string>Read the Forward button on your Logitech Bolt mouse to distinguish clicks from holds.</string>
+<key>NSInputMonitoringUsageDescription</key><string>Read the selected Logitech Bolt mouse buttons and held movement for shortcuts and zoom.</string>
 </dict></plist>
 PLIST
 # Use normal signing requirements; local builds default to ad-hoc signing.

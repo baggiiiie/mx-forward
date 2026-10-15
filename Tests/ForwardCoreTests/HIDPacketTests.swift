@@ -2,6 +2,13 @@ import ForwardCore
 import Foundation
 
 final class HIDPacketTests {
+    func testSignedRawMovementAndShortReports() {
+        let bytes: [UInt8] = [0x11, 2, 9, 0x10, 0xFE, 0xD4, 1, 0xC2] + Array(repeating: 0, count: 12)
+        let packet = HIDPacket.parse(bytes)!
+        expectEqual(packet.movement?.dx, -300)
+        expectEqual(packet.movement?.dy, 450)
+        expectNil(HIDPacket.parse([0x10, 2, 9, 0x10, 0, 0, 0])?.movement)
+    }
     func testShortFeatureDiscoveryPacket() {
         let bytes = HIDPacket.request(
             device: 2, feature: 0, function: 0,

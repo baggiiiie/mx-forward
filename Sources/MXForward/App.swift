@@ -43,13 +43,13 @@ struct MenuContents: View {
     @ObservedObject var model: AppModel
     @Environment(\.openWindow) private var openWindow
     var body: some View {
-        Text(model.enabled ? "Forward mapping active" : "Forward mapping paused")
+        Text(model.enabled ? "Mouse mappings active" : "Mouse mappings paused")
         Button("Open MX Forward") {
             openWindow(id: "main")
             NSApp.activate(ignoringOtherApps: true)
         }
         if model.enabled || model.needsRelease {
-            Button("Pause and restore Forward") { Task { await model.pause() } }.disabled(model.busy)
+            Button("Pause and restore buttons") { Task { await model.pause() } }.disabled(model.busy)
         }
         Divider()
         Button("Quit") { NSApp.terminate(nil) }.disabled(model.busy)

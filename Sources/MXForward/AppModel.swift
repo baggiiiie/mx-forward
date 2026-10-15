@@ -8,7 +8,7 @@ final class AppModel: ObservableObject {
     @Published var preferences = Preferences.load() {
         didSet {
             preferences.save()
-            cancelPress()
+            cancelInput()
         }
     }
     @Published var diagnostics = false
@@ -26,6 +26,15 @@ final class AppModel: ObservableObject {
     @Published private(set) var needsRelease = false
     private let mouse = BoltMouse()
     private var interpreter = PressInterpreter()
+    private var zoom = ZoomInterpreter()
+    private var zoomAnchor = CGPoint.zero
+    private var zoomTestWindow: ZoomTestWindow?
+
+    var canEnable: Bool {
+        connected && !busy && !logitechRunning && !preferences.controls.isEmpty
+            && (preferences.testMode
+                || (accessibility && preferences.shortcutsReady))
+    }
     private var operationEpoch = 0
     private var holdTask: Task<Void, Never>?
     private var monitorTask: Task<Void, Never>?
@@ -38,10 +47,14 @@ final class AppModel: ObservableObject {
             self.connected = self.mouse.connection != nil
         }
         mouse.onLog = { [weak self] in self?.append($0) }
-        mouse.onPress = { [weak self] in self?.physicalPress($0) }
+        mouse.onPress = { [weak self] control, down in self?.physicalPress(control, down: down) }
+        mouse.onMovement = { [weak self] dx, dy in
+            guard let self, self.enabled else { return }
+            self.performZoom(self.zoom.move(dx: dx, dy: dy))
+        }
         mouse.onDisconnect = { [weak self] in
             self?.operationEpoch += 1
-            self?.cancelPress()
+            self?.cancelInput()
             self?.enabled = false
             self?.needsRelease = false
             self?.append("Disconnected; enable again after reconnect")
@@ -55,7 +68,7 @@ final class AppModel: ObservableObject {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.operationEpoch += 1
-                    self.cancelPress()
+                    self.cancelInput()
                     self.enabled = false
                     self.needsRelease = !self.mouse.releaseImmediately()
                     self.status = "Paused for sleep. Discover and enable again after waking."
@@ -99,7 +112,7 @@ final class AppModel: ObservableObject {
             guard enabled, !busy, epoch == operationEpoch else { return }
             if !valid {
                 await pause(
-                    reason: "Forward control was reset. Discover and enable again.", forgetConnection: true)
+                    reason: "Button control was reset. Discover and enable again.", forgetConnection: true)
             }
         } catch {
             guard enabled, !busy, epoch == operationEpoch else { return }
@@ -143,8 +156,11 @@ final class AppModel: ObservableObject {
             status = "Stop Logitech's background agent before enabling."
             return
         }
-        guard preferences.testMode || (accessibility && preferences.shortcut != nil) else {
-            status = "Record a hold shortcut and grant Accessibility before live use."
+        guard !preferences.controls.isEmpty,
+            preferences.testMode
+                || (accessibility && preferences.shortcutsReady)
+        else {
+            status = "Choose a button, grant Accessibility, and record any selected keyboard shortcuts."
             return
         }
         busy = true
@@ -155,7 +171,7 @@ final class AppModel: ObservableObject {
         operationEpoch += 1
         let epoch = operationEpoch
         do {
-            try await mouse.claim()
+            try await mouse.claim(preferences.controls)
             guard epoch == operationEpoch else {
                 try await mouse.release()
                 return
@@ -163,8 +179,8 @@ final class AppModel: ObservableObject {
             enabled = true
             status =
                 preferences.testMode
-                ? "Test mode active · no actions will be sent"
-                : "Active · click Forward, hold for your shortcut"
+                ? "Test mode active · Forward and zoom actions are logged"
+                : "Selected button mappings active"
             append(status)
         } catch {
             if epoch == operationEpoch { status = error.localizedDescription }
@@ -172,13 +188,13 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func pause(reason: String = "Paused · Forward returned to the mouse", forgetConnection: Bool = false)
+    func pause(reason: String = "Paused · buttons returned to the mouse", forgetConnection: Bool = false)
         async
     {
         guard !busy else { return }
         operationEpoch += 1
         let epoch = operationEpoch
-        cancelPress()
+        cancelInput()
         enabled = false
         busy = true
         defer {
@@ -196,20 +212,35 @@ final class AppModel: ObservableObject {
             append(status)
         } catch {
             if epoch == operationEpoch {
-                status = "Could not restore Forward. Retry Pause, or power-cycle the mouse."
+                status = "Could not restore a button. Retry Pause, or power-cycle the mouse."
             }
             append(error.localizedDescription)
         }
     }
 
-    private func cancelPress() {
+    private func cancelInput() {
+        performZoom(zoom.cancel())
         holdTask?.cancel()
         holdTask = nil
         interpreter.cancel()
     }
 
-    private func physicalPress(_ down: Bool) {
+    private func physicalPress(_ control: MouseControl, down: Bool) {
         guard enabled else { return }
+        if control == .top {
+            if down {
+                guard !zoom.isPressed else { return }
+                zoomAnchor = CGEvent(source: nil)?.location ?? .zero
+                zoom.down(
+                    sensitivity: preferences.zoomSensitivity,
+                    discardFirstReport: mouse.connection?.discardFirstMovement ?? false)
+                lastAction = "Top button pressed…"
+                append("Top button down")
+            } else {
+                performZoom(zoom.up())
+            }
+            return
+        }
         guard down != interpreter.isPressed else { return }
         if down {
             interpreter.down(
@@ -246,6 +277,54 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func performZoom(_ actions: [ZoomAction]) {
+        for action in actions {
+            switch action {
+            case .click:
+                performTopClick()
+                continue
+            case .begin:
+                lastAction = "Top + vertical movement → Zoom"
+                append("Zoom began")
+            case .magnify(let amount):
+                lastAction = amount > 0 ? "Top + move up → Zoom in" : "Top + move down → Zoom out"
+            case .end, .cancel:
+                append(action == .end ? "Zoom ended" : "Zoom cancelled")
+            }
+            if preferences.testMode { continue }
+            if !ZoomOutput.send(action, at: zoomAnchor) {
+                status = "Zoom could not be sent. Check Accessibility."
+            }
+        }
+    }
+
+    private func performTopClick() {
+        let action = preferences.topClickAction
+        let label =
+            action == .shortcut
+            ? preferences.topClickShortcut?.label ?? "shortcut not set" : action.label
+        lastAction = (preferences.testMode ? "Test: " : "") + "Top click → \(label)"
+        append(lastAction)
+        guard !preferences.testMode else { return }
+        let sent: Bool
+        switch action {
+        case .smartZoom: sent = ZoomOutput.send(.click, at: zoomAnchor)
+        case .shortcut:
+            sent = preferences.topClickShortcut.map(KeyboardOutput.send) ?? false
+        case .none: return
+        }
+        if !sent { status = "Top-button action could not be sent. Check Accessibility." }
+    }
+
+    func showZoomTest() {
+        if zoomTestWindow == nil {
+            zoomTestWindow = ZoomTestWindow { [weak self] in self?.append($0) }
+        }
+        zoomTestWindow?.showWindow(nil)
+        zoomTestWindow?.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     func openPermission(_ kind: String) {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(kind)") {
             NSWorkspace.shared.open(url)
@@ -256,9 +335,9 @@ final class AppModel: ObservableObject {
         await pause()
         if !mouse.claimed { return true }
         let alert = NSAlert()
-        alert.messageText = "Forward could not be restored"
+        alert.messageText = "Mouse buttons could not be restored"
         alert.informativeText =
-            "The mouse is not responding. You can stay and retry Pause, or quit and turn the mouse off and on to restore its native Forward button."
+            "The mouse is not responding. You can stay and retry Pause, or quit and turn the mouse off and on to restore its native buttons."
         alert.addButton(withTitle: "Stay and retry")
         alert.addButton(withTitle: "Quit anyway")
         return alert.runModal() == .alertSecondButtonReturn

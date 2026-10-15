@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import ForwardCore
 
 struct Shortcut: Codable, Equatable {
     var keyCode: UInt16
@@ -32,10 +33,57 @@ struct Shortcut: Codable, Equatable {
     }
 }
 
+enum TopClickAction: String, Codable, CaseIterable, Identifiable {
+    case smartZoom, shortcut, none
+    var id: Self { self }
+    var label: String {
+        switch self {
+        case .smartZoom: return "Smart Zoom"
+        case .shortcut: return "Keyboard shortcut"
+        case .none: return "No action"
+        }
+    }
+}
+
 struct Preferences: Codable {
     var holdMilliseconds: Double = 400
     var shortcut: Shortcut?
     var testMode = true
+    var forwardEnabled = true
+    var topZoomEnabled = true
+    var zoomSensitivity = 2.0
+    var topClickAction = TopClickAction.smartZoom
+    var topClickShortcut: Shortcut?
+
+    var shortcutsReady: Bool {
+        (!forwardEnabled || shortcut != nil)
+            && (!topZoomEnabled || topClickAction != .shortcut || topClickShortcut != nil)
+    }
+
+    var controls: Set<MouseControl> {
+        var result = Set<MouseControl>()
+        if forwardEnabled { result.insert(.forward) }
+        if topZoomEnabled { result.insert(.top) }
+        return result
+    }
+
+    init() {}
+    private enum CodingKeys: String, CodingKey {
+        case holdMilliseconds, shortcut, testMode, forwardEnabled, topZoomEnabled, zoomSensitivity
+        case topClickAction, topClickShortcut
+    }
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        holdMilliseconds = try values.decodeIfPresent(Double.self, forKey: .holdMilliseconds) ?? 400
+        shortcut = try values.decodeIfPresent(Shortcut.self, forKey: .shortcut)
+        testMode = try values.decodeIfPresent(Bool.self, forKey: .testMode) ?? true
+        forwardEnabled = try values.decodeIfPresent(Bool.self, forKey: .forwardEnabled) ?? true
+        topZoomEnabled = try values.decodeIfPresent(Bool.self, forKey: .topZoomEnabled) ?? true
+        zoomSensitivity = try values.decodeIfPresent(Double.self, forKey: .zoomSensitivity) ?? 2
+        topClickAction =
+            try values.decodeIfPresent(TopClickAction.self, forKey: .topClickAction) ?? .smartZoom
+        topClickShortcut = try values.decodeIfPresent(Shortcut.self, forKey: .topClickShortcut)
+    }
     static let storageKey = "preferences.v1"
     static func load() -> Preferences {
         guard let data = UserDefaults.standard.data(forKey: storageKey),
@@ -43,6 +91,8 @@ struct Preferences: Codable {
         else { return Preferences() }
         if !value.holdMilliseconds.isFinite { value.holdMilliseconds = 400 }
         value.holdMilliseconds = min(1500, max(150, value.holdMilliseconds))
+        if !value.zoomSensitivity.isFinite { value.zoomSensitivity = 2 }
+        value.zoomSensitivity = min(6, max(0.25, value.zoomSensitivity))
         return value
     }
     func save() {

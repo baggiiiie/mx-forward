@@ -4,9 +4,11 @@ import IOKit.hid
 
 enum MouseError: LocalizedError {
     case message(String)
+    case timeout
     var errorDescription: String? {
         switch self {
         case .message(let text): return text
+        case .timeout: return "Mouse response timed out"
         }
     }
 }
@@ -18,6 +20,8 @@ final class BoltMouse {
         let endpoint: UInt
         let slot: UInt8
         let feature: UInt8
+        let discardFirstMovement: Bool
+        let topZoomAvailable: Bool
     }
     private struct Pending {
         let id: UUID
@@ -34,10 +38,11 @@ final class BoltMouse {
     private var probeGenerations: [UInt: UUID] = [:]
     private var nextSoftwareID: UInt8 = 8
     private(set) var connection: Connection?
-    private var originalReporting: ForwardReporting?
-    var claimed: Bool { originalReporting != nil }
+    private var claims: [MouseControl: ControlReporting] = [:]
+    var claimed: Bool { !claims.isEmpty }
     var onStatus: (String) -> Void = { _ in }
-    var onPress: (Bool) -> Void = { _ in }
+    var onPress: (MouseControl, Bool) -> Void = { _, _ in }
+    var onMovement: (Int16, Int16) -> Void = { _, _ in }
     var onDisconnect: () -> Void = {}
     var onLog: (String) -> Void = { _ in }
 
@@ -157,22 +162,35 @@ final class BoltMouse {
                     }
                     let name = String(decoding: bytes, as: UTF8.self)
                     guard name.localizedCaseInsensitiveContains("MX Master 3S") else { continue }
-                    let index = try await self.feature(0x1B04, id, slot)
+                    let special = try await self.request(id, slot, 0, 0, [0x1B, 0x04])
+                    let index = special.payload[0]
+                    guard index != 0 else { throw MouseError.message("Missing button control feature") }
                     let count = try await self.request(id, slot, index, 0)
                     var foundForward = false
+                    var topZoomAvailable = false
                     for position in 0..<min(Int(count.payload[0]), 64) {
                         let info = try await self.request(id, slot, index, 1, [UInt8(position)])
                         if info.payload.count >= 5, info.payload[0] == 0, info.payload[1] == 86 {
                             foundForward = info.payload[4] & 0x20 != 0
+                        }
+                        if info.payload.count >= 9, info.payload.starts(with: MouseControl.top.query) {
+                            topZoomAvailable = info.payload[4] & 0x20 != 0 && info.payload[8] & 1 != 0
                         }
                     }
                     guard foundForward else {
                         throw MouseError.message("Forward button does not support software control.")
                     }
                     guard self.connection == nil else { return }
-                    self.connection = Connection(endpoint: id, slot: slot, feature: index)
+                    self.connection = Connection(
+                        endpoint: id, slot: slot, feature: index,
+                        discardFirstMovement: special.payload[2] >= 5, topZoomAvailable: topZoomAvailable)
                     self.onStatus("\(name) connected · Bolt slot \(slot)")
-                    self.onLog("Identified Forward control 0x0056 (feature \(index))")
+                    self.onLog(
+                        "Forward detected; top-button movement: \(topZoomAvailable ? "available" : "unavailable")"
+                    )
+                    self.onLog(
+                        "Button feature version \(special.payload[2]); initial movement filter \(special.payload[2] >= 5 ? "on" : "off")"
+                    )
                     return
                 } catch {
                     guard !Task.isCancelled else { return }
@@ -193,18 +211,29 @@ final class BoltMouse {
         return response.payload[0]
     }
 
-    func claim() async throws {
+    func claim(_ controls: Set<MouseControl>) async throws {
         guard let c = connection else { throw MouseError.message("Discover your mouse first.") }
         guard !claimed else { return }
-        let settings = try await readReporting(c)
-        guard connection == c else { throw MouseError.message("Mouse connection changed. Discover again.") }
-        // Keep cleanup state even if the write succeeds but its reply is lost.
-        originalReporting = settings
+        guard !controls.isEmpty else { throw MouseError.message("Choose a button to enable.") }
+        if controls.contains(.top) && !c.topZoomAvailable {
+            throw MouseError.message("This mouse did not report top-button movement support.")
+        }
         do {
-            _ = try await request(c.endpoint, c.slot, c.feature, 3, settings.parameters(divert: true))
-            let state = try await readReporting(c)
-            guard state.temporarilyDiverted, state.remap == settings.remap else {
-                throw MouseError.message("The mouse did not confirm temporary Forward-button control.")
+            for control in controls.sorted() {
+                let settings = try await readReporting(control, c)
+                guard connection == c else {
+                    throw MouseError.message("Mouse connection changed. Discover again.")
+                }
+                // Keep cleanup state even if the write succeeds but its reply is lost.
+                claims[control] = settings
+                _ = try await request(c.endpoint, c.slot, c.feature, 3, settings.parameters(divert: true))
+                let state = try await readReporting(control, c)
+                guard state.temporarilyDiverted, state.remap == settings.remap,
+                    state.rawMovement == (control == .top)
+                else {
+                    throw MouseError.message("The mouse did not confirm control of \(control.name).")
+                }
+                onLog("Claimed \(control.name)\(control == .top ? " with raw movement" : "")")
             }
         } catch {
             // Cleanup must still run when the caller was cancelled.
@@ -215,41 +244,64 @@ final class BoltMouse {
 
     func release() async throws {
         guard claimed, let c = connection else { return }
-        let settings = try await readReporting(c)
-        _ = try await request(c.endpoint, c.slot, c.feature, 3, settings.parameters(divert: false))
-        let state = try await readReporting(c)
-        guard !state.diverted, !state.persistent, state.remap == settings.remap else {
-            throw MouseError.message("Mouse did not confirm restoration of native Forward.")
+        var failure: Error?
+        for control in claims.keys.sorted() {
+            do {
+                let settings = try await readReporting(control, c)
+                _ = try await request(c.endpoint, c.slot, c.feature, 3, settings.parameters(divert: false))
+                let state = try await readReporting(control, c)
+                guard !state.diverted, !state.persistent, state.remap == settings.remap,
+                    !state.rawMovement
+                else {
+                    throw MouseError.message("Mouse did not confirm restoration of \(control.name).")
+                }
+                claims.removeValue(forKey: control)
+                onLog("Restored \(control.name)")
+            } catch { failure = failure ?? error }
         }
-        originalReporting = nil
+        if let failure { throw failure }
     }
 
     /// Sleep cleanup cannot wait for a reply on the main run loop.
     func releaseImmediately() -> Bool {
-        guard let settings = originalReporting, let c = connection,
-            let device = devices[c.endpoint]
-        else { return !claimed }
-        let bytes = HIDPacket.request(
-            device: c.slot, feature: c.feature, function: 3,
-            softwareID: 15, payload: settings.parameters(divert: false))
-        let result = bytes.withUnsafeBufferPointer {
-            IOHIDDeviceSetReport(
-                device, kIOHIDReportTypeOutput, CFIndex(bytes[0]), $0.baseAddress!, bytes.count)
+        guard let c = connection, let device = devices[c.endpoint] else { return !claimed }
+        for control in claims.keys.sorted() {
+            guard let settings = claims[control] else { continue }
+            let bytes = HIDPacket.request(
+                device: c.slot, feature: c.feature, function: 3,
+                softwareID: 15, payload: settings.parameters(divert: false))
+            let result = bytes.withUnsafeBufferPointer {
+                IOHIDDeviceSetReport(
+                    device, kIOHIDReportTypeOutput, CFIndex(bytes[0]), $0.baseAddress!, bytes.count)
+            }
+            if result == kIOReturnSuccess { claims.removeValue(forKey: control) }
         }
-        if result == kIOReturnSuccess { originalReporting = nil }
-        return result == kIOReturnSuccess
+        return !claimed
     }
 
     func verifyClaim() async throws -> Bool {
-        guard let original = originalReporting, let c = connection else { return false }
-        let state = try await readReporting(c)
-        return state.temporarilyDiverted && state.remap == original.remap
+        guard claimed, let c = connection else { return false }
+        for control in claims.keys.sorted() {
+            guard let original = claims[control] else { return false }
+            let state = try await readReporting(control, c)
+            guard state.temporarilyDiverted, state.remap == original.remap,
+                state.rawMovement == (control == .top)
+            else { return false }
+        }
+        return true
     }
 
-    private func readReporting(_ c: Connection) async throws -> ForwardReporting {
-        let response = try await request(c.endpoint, c.slot, c.feature, 2, ForwardReporting.query)
-        guard let state = ForwardReporting(response.payload) else {
-            throw MouseError.message("Unexpected Forward-button settings response.")
+    private func readReporting(_ control: MouseControl, _ c: Connection) async throws -> ControlReporting {
+        let response: HIDPacket
+        do {
+            response = try await request(c.endpoint, c.slot, c.feature, 2, control.query)
+        } catch MouseError.timeout {
+            // A missed receiver reply should not interrupt an otherwise healthy mapping.
+            onLog("Retrying settings read for \(control.name)")
+            response = try await request(c.endpoint, c.slot, c.feature, 2, control.query)
+        }
+        guard let state = ControlReporting(response.payload, control: control) else {
+            throw MouseError.message("Unexpected settings response for \(control.name).")
         }
         return state
     }
@@ -266,7 +318,7 @@ final class BoltMouse {
         }
         if connection?.endpoint == id {
             connection = nil
-            originalReporting = nil
+            claims.removeAll()
             onDisconnect()
             onStatus("Bolt receiver disconnected")
         }
@@ -291,9 +343,15 @@ final class BoltMouse {
             return
         }
         guard claimed, let c = connection, c.endpoint == endpoint, c.slot == packet.device,
-            c.feature == packet.feature, packet.softwareID == 0, packet.function == 0
+            c.feature == packet.feature, packet.softwareID == 0
         else { return }
-        onPress(packet.pressedControls.contains(ForwardReporting.controlID))
+        if packet.function == 0 {
+            for control in claims.keys.sorted() {
+                onPress(control, packet.pressedControls.contains(control.rawValue))
+            }
+        } else if claims[.top] != nil, let movement = packet.movement {
+            onMovement(movement.dx, movement.dy)
+        }
     }
 
     private func request(
@@ -324,7 +382,7 @@ final class BoltMouse {
                 Task { @MainActor [weak self] in
                     try? await Task.sleep(for: .milliseconds(850))
                     self?.pending.removeValue(forKey: id)?.continuation.resume(
-                        throwing: MouseError.message("Mouse response timed out"))
+                        throwing: MouseError.timeout)
                 }
             }
         } onCancel: {
