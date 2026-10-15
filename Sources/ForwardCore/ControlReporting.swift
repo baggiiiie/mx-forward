@@ -19,7 +19,7 @@ public struct ControlReporting: Equatable {
 
     public func parameters(divert: Bool) -> [UInt8] {
         var flags: UInt8 = divert ? 0x0B : 0x0A
-        // Only the top button reports movement; release clears it on both buttons.
+        // Request movement only for the top button, and clear it on release.
         flags |= control == .top && divert ? 0x30 : 0x20
         return control.query + [flags, UInt8(remap >> 8), UInt8(remap & 255)]
     }

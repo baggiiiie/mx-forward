@@ -1,6 +1,12 @@
 import ForwardCore
 
-final class ForwardReportingTests {
+final class ControlReportingTests {
+    func testBackReportingPreservesRemapAndDisablesRawMovement() {
+        let settings = ControlReporting([0, 83, 0x31, 0xAB, 0xCD], control: .back)!
+        expectEqual(settings.parameters(divert: true), [0, 83, 0x2B, 0xAB, 0xCD])
+        expectEqual(settings.parameters(divert: false), [0, 83, 0x2A, 0xAB, 0xCD])
+        expectNil(ControlReporting([0, 86, 1, 0, 86], control: .back))
+    }
     func testTopButtonClaimsAndClearsRawMovement() {
         let settings = ControlReporting([0, 196, 0x11, 0, 196], control: .top)!
         expectEqual(settings.rawMovement, true)

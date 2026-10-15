@@ -12,7 +12,7 @@ struct ContentView: View {
                     Image(systemName: "computermouse.fill").font(.largeTitle).foregroundStyle(.tint)
                     VStack(alignment: .leading, spacing: 3) {
                         Text("MX Forward").font(.title2.weight(.semibold))
-                        Text("Forward shortcuts and top-button zoom").foregroundStyle(.secondary)
+                        Text("Forward, Back and top-button zoom").foregroundStyle(.secondary)
                     }
                     Spacer()
                     Text("MVP · Bolt").font(.caption).foregroundStyle(.secondary)
@@ -26,7 +26,7 @@ struct ContentView: View {
                             Button("Discover mouse") { model.discover() }
                                 .disabled(model.enabled || model.busy || model.needsRelease)
                             Spacer()
-                            if model.enabled || model.needsRelease {
+                            if model.enabled || model.needsRelease || model.preferences.resumeMappings {
                                 Button(model.needsRelease ? "Retry restoring buttons" : "Pause") {
                                     Task { await model.pause() }
                                 }.disabled(model.busy)
@@ -38,31 +38,48 @@ struct ContentView: View {
                         }
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(4)
                 }
-                VStack(alignment: .leading, spacing: 14) {
-                    Toggle("Forward click / hold", isOn: $model.preferences.forwardEnabled)
-                    HStack {
-                        Text("Single click").frame(width: 100, alignment: .leading)
-                        Text("Forward  ⌘]").fontWeight(.medium)
-                    }
-                    HStack {
-                        Text("Press and hold").frame(width: 100, alignment: .leading)
-                        ShortcutRecorder(shortcut: $model.preferences.shortcut)
-                            .frame(height: 32)
-                        if model.preferences.shortcut != nil {
-                            Button("Clear") { model.preferences.shortcut = nil }
+                GroupBox("Side buttons") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Toggle("Forward", isOn: $model.preferences.forwardEnabled)
+                            Toggle("Back", isOn: $model.preferences.backEnabled)
                         }
-                    }
-                    HStack {
-                        Text("Hold delay").frame(width: 100, alignment: .leading)
-                        Slider(value: $model.preferences.holdMilliseconds, in: 150...1500, step: 50)
-                            .accessibilityLabel("Hold delay in milliseconds")
-                        Text("\(Int(model.preferences.holdMilliseconds)) ms").monospacedDigit().frame(
-                            width: 65, alignment: .trailing)
-                    }
-                    Text("A click fires on release. A hold fires once at the delay, without Forward.")
-                        .font(.callout).foregroundStyle(.secondary)
-                    Toggle("Test mode — show actions without sending them", isOn: $model.preferences.testMode)
+                        Text("Click Forward: ⌘]. Click Back: ⌘[. Navigation fires on release.")
+                            .font(.callout).foregroundStyle(.secondary)
+                        Toggle("Hold Forward for a shortcut", isOn: $model.preferences.forwardHoldEnabled)
+                            .disabled(!model.preferences.forwardEnabled)
+                        if model.preferences.forwardHoldEnabled {
+                            VStack(alignment: .leading, spacing: 12) {
+                                HStack {
+                                    Text("Shortcut").frame(width: 80, alignment: .leading)
+                                    ShortcutRecorder(shortcut: $model.preferences.shortcut)
+                                        .frame(height: 32)
+                                    if model.preferences.shortcut != nil {
+                                        Button("Clear") { model.preferences.shortcut = nil }
+                                    }
+                                }
+                                HStack {
+                                    Text("Hold delay").frame(width: 80, alignment: .leading)
+                                    Slider(
+                                        value: $model.preferences.holdMilliseconds, in: 150...1500, step: 50
+                                    )
+                                    .accessibilityLabel("Hold delay in milliseconds")
+                                    Text("\(Int(model.preferences.holdMilliseconds)) ms").monospacedDigit()
+                                        .frame(width: 65, alignment: .trailing)
+                                }
+                                Text("A hold sends the shortcut once, without also going Forward.")
+                                    .font(.callout).foregroundStyle(.secondary)
+                            }.disabled(!model.preferences.forwardEnabled)
+                        }
+                    }.padding(4)
                 }.disabled(model.enabled || model.busy || model.needsRelease)
+                Toggle("Test mode — show actions without sending them", isOn: $model.preferences.testMode)
+                    .disabled(model.enabled || model.busy || model.needsRelease)
+                Text(
+                    "The mouse connects automatically. Enable once to resume after launch or reconnect. Pause keeps mappings off."
+                )
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
                 GroupBox("Top button") {
                     VStack(alignment: .leading, spacing: 10) {
                         Toggle("Enable top button", isOn: $model.preferences.topZoomEnabled)
@@ -145,7 +162,7 @@ struct ContentView: View {
                     }.frame(height: 130)
                 }
                 Text(
-                    "Forward uses ⌘]. Top-button zoom uses native pinch events in apps that support them. Thumb-button gestures are not implemented yet."
+                    "Side buttons use ⌘[ and ⌘]. Top-button zoom uses native pinch events in apps that support them. Thumb-button gestures are not implemented yet."
                 )
                 .font(.caption).foregroundStyle(.secondary)
             }

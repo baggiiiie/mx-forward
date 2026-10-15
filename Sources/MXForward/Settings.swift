@@ -49,20 +49,24 @@ struct Preferences: Codable {
     var holdMilliseconds: Double = 400
     var shortcut: Shortcut?
     var testMode = true
+    var resumeMappings = false
     var forwardEnabled = true
+    var backEnabled = true
+    var forwardHoldEnabled = false
     var topZoomEnabled = true
     var zoomSensitivity = 2.0
     var topClickAction = TopClickAction.smartZoom
     var topClickShortcut: Shortcut?
 
     var shortcutsReady: Bool {
-        (!forwardEnabled || shortcut != nil)
+        (!forwardEnabled || !forwardHoldEnabled || shortcut != nil)
             && (!topZoomEnabled || topClickAction != .shortcut || topClickShortcut != nil)
     }
 
     var controls: Set<MouseControl> {
         var result = Set<MouseControl>()
         if forwardEnabled { result.insert(.forward) }
+        if backEnabled { result.insert(.back) }
         if topZoomEnabled { result.insert(.top) }
         return result
     }
@@ -71,13 +75,19 @@ struct Preferences: Codable {
     private enum CodingKeys: String, CodingKey {
         case holdMilliseconds, shortcut, testMode, forwardEnabled, topZoomEnabled, zoomSensitivity
         case topClickAction, topClickShortcut
+        case backEnabled, forwardHoldEnabled
+        case resumeMappings
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         holdMilliseconds = try values.decodeIfPresent(Double.self, forKey: .holdMilliseconds) ?? 400
         shortcut = try values.decodeIfPresent(Shortcut.self, forKey: .shortcut)
         testMode = try values.decodeIfPresent(Bool.self, forKey: .testMode) ?? true
+        resumeMappings = try values.decodeIfPresent(Bool.self, forKey: .resumeMappings) ?? false
         forwardEnabled = try values.decodeIfPresent(Bool.self, forKey: .forwardEnabled) ?? true
+        backEnabled = try values.decodeIfPresent(Bool.self, forKey: .backEnabled) ?? true
+        forwardHoldEnabled =
+            try values.decodeIfPresent(Bool.self, forKey: .forwardHoldEnabled) ?? (shortcut != nil)
         topZoomEnabled = try values.decodeIfPresent(Bool.self, forKey: .topZoomEnabled) ?? true
         zoomSensitivity = try values.decodeIfPresent(Double.self, forKey: .zoomSensitivity) ?? 2
         topClickAction =
@@ -104,6 +114,7 @@ struct Preferences: Codable {
 
 enum KeyboardOutput {
     static let forward = Shortcut(keyCode: 30, modifiers: CGEventFlags.maskCommand.rawValue, keyLabel: "]")
+    static let back = Shortcut(keyCode: 33, modifiers: CGEventFlags.maskCommand.rawValue, keyLabel: "[")
     static func send(_ shortcut: Shortcut) -> Bool {
         guard AXIsProcessTrusted(),
             let source = CGEventSource(stateID: .privateState),

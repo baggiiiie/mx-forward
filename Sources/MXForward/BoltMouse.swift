@@ -21,7 +21,7 @@ final class BoltMouse {
         let slot: UInt8
         let feature: UInt8
         let discardFirstMovement: Bool
-        let topZoomAvailable: Bool
+        let availableControls: Set<MouseControl>
     }
     private struct Pending {
         let id: UUID
@@ -166,27 +166,30 @@ final class BoltMouse {
                     let index = special.payload[0]
                     guard index != 0 else { throw MouseError.message("Missing button control feature") }
                     let count = try await self.request(id, slot, index, 0)
-                    var foundForward = false
-                    var topZoomAvailable = false
+                    var availableControls = Set<MouseControl>()
                     for position in 0..<min(Int(count.payload[0]), 64) {
                         let info = try await self.request(id, slot, index, 1, [UInt8(position)])
-                        if info.payload.count >= 5, info.payload[0] == 0, info.payload[1] == 86 {
-                            foundForward = info.payload[4] & 0x20 != 0
+                        guard info.payload.count >= 5, info.payload[4] & 0x20 != 0,
+                            let control = MouseControl(
+                                rawValue: UInt16(info.payload[0]) << 8 | UInt16(info.payload[1]))
+                        else { continue }
+                        if control == .top
+                            && (info.payload.count < 9 || info.payload[8] & 1 == 0)
+                        {
+                            continue
                         }
-                        if info.payload.count >= 9, info.payload.starts(with: MouseControl.top.query) {
-                            topZoomAvailable = info.payload[4] & 0x20 != 0 && info.payload[8] & 1 != 0
-                        }
+                        availableControls.insert(control)
                     }
-                    guard foundForward else {
+                    guard availableControls.contains(.forward) else {
                         throw MouseError.message("Forward button does not support software control.")
                     }
                     guard self.connection == nil else { return }
                     self.connection = Connection(
                         endpoint: id, slot: slot, feature: index,
-                        discardFirstMovement: special.payload[2] >= 5, topZoomAvailable: topZoomAvailable)
+                        discardFirstMovement: special.payload[2] >= 5, availableControls: availableControls)
                     self.onStatus("\(name) connected · Bolt slot \(slot)")
                     self.onLog(
-                        "Forward detected; top-button movement: \(topZoomAvailable ? "available" : "unavailable")"
+                        "Available buttons: \(availableControls.sorted().map(\.name).joined(separator: ", "))"
                     )
                     self.onLog(
                         "Button feature version \(special.payload[2]); initial movement filter \(special.payload[2] >= 5 ? "on" : "off")"
@@ -198,7 +201,7 @@ final class BoltMouse {
                 }
             }
             if self.connection == nil {
-                self.onStatus("No awake MX Master 3S found. Move the mouse, then Discover again.")
+                self.onStatus("Waiting for your MX Master 3S. Move the mouse to wake it.")
             }
         }
     }
@@ -215,8 +218,10 @@ final class BoltMouse {
         guard let c = connection else { throw MouseError.message("Discover your mouse first.") }
         guard !claimed else { return }
         guard !controls.isEmpty else { throw MouseError.message("Choose a button to enable.") }
-        if controls.contains(.top) && !c.topZoomAvailable {
-            throw MouseError.message("This mouse did not report top-button movement support.")
+        let unavailable = controls.subtracting(c.availableControls)
+        if !unavailable.isEmpty {
+            throw MouseError.message(
+                "Mouse control unavailable: \(unavailable.sorted().map(\.name).joined(separator: ", ")).")
         }
         do {
             for control in controls.sorted() {

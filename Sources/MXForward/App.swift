@@ -48,7 +48,7 @@ struct MenuContents: View {
             openWindow(id: "main")
             NSApp.activate(ignoringOtherApps: true)
         }
-        if model.enabled || model.needsRelease {
+        if model.enabled || model.needsRelease || model.preferences.resumeMappings {
             Button("Pause and restore buttons") { Task { await model.pause() } }.disabled(model.busy)
         }
         Divider()

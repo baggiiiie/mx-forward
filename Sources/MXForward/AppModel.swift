@@ -25,17 +25,20 @@ final class AppModel: ObservableObject {
     @Published private(set) var logitechRunning = false
     @Published private(set) var needsRelease = false
     private let mouse = BoltMouse()
-    private var interpreter = PressInterpreter()
+    private var sideButtons = SideButtonInterpreter()
     private var zoom = ZoomInterpreter()
     private var zoomAnchor = CGPoint.zero
     private var zoomTestWindow: ZoomTestWindow?
 
     var canEnable: Bool {
-        connected && !busy && !logitechRunning && !preferences.controls.isEmpty
+        connected && !enabled && !busy && !sleeping && !quitting && !needsRelease
+            && !logitechRunning && !preferences.controls.isEmpty
             && (preferences.testMode
                 || (accessibility && preferences.shortcutsReady))
     }
     private var operationEpoch = 0
+    private var sleeping = false
+    private var quitting = false
     private var holdTask: Task<Void, Never>?
     private var monitorTask: Task<Void, Never>?
     private var wakeObservers: [NSObjectProtocol] = []
@@ -57,7 +60,7 @@ final class AppModel: ObservableObject {
             self?.cancelInput()
             self?.enabled = false
             self?.needsRelease = false
-            self?.append("Disconnected; enable again after reconnect")
+            self?.append("Disconnected; waiting for the mouse to reconnect")
         }
         let notifications = NSWorkspace.shared.notificationCenter
         wakeObservers.append(
@@ -67,11 +70,12 @@ final class AppModel: ObservableObject {
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
+                    self.sleeping = true
                     self.operationEpoch += 1
                     self.cancelInput()
                     self.enabled = false
                     self.needsRelease = !self.mouse.releaseImmediately()
-                    self.status = "Paused for sleep. Discover and enable again after waking."
+                    self.status = "Paused for sleep"
                 }
             })
         wakeObservers.append(
@@ -81,19 +85,54 @@ final class AppModel: ObservableObject {
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self else { return }
+                    self.sleeping = false
                     self.mouse.forgetConnection()
                     self.connected = self.mouse.connection != nil
                 }
             })
         refreshPermissions()
+        connectIfNeeded()
         monitorTask = Task { [weak self] in
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(3)) } catch { return }
                 guard let self else { return }
                 self.refreshPermissions()
-                await self.checkMouse()
+                await self.maintainConnection()
             }
         }
+    }
+
+    private func connectIfNeeded() {
+        guard !sleeping, !quitting, !busy, !enabled, !needsRelease,
+            mouse.connection == nil
+        else { return }
+        guard !logitechRunning else {
+            status = "Waiting for Logitech's mouse agent to stop"
+            return
+        }
+        do { try mouse.start() } catch {
+            let message = error.localizedDescription
+            if status != message { append(message) }
+            status = message
+        }
+    }
+
+    private func maintainConnection() async {
+        guard !sleeping, !quitting, !busy else { return }
+        if enabled {
+            await checkMouse()
+            return
+        }
+        guard !logitechRunning else {
+            status = "Waiting for Logitech's mouse agent to stop"
+            return
+        }
+        if needsRelease {
+            await suspend(reason: "Buttons restored", forgetConnection: true)
+            return
+        }
+        connectIfNeeded()
+        if preferences.resumeMappings && canEnable { await enable() }
     }
 
     private func checkMouse() async {
@@ -102,7 +141,7 @@ final class AppModel: ObservableObject {
             let reason =
                 logitechRunning
                 ? "Paused: Logitech's agent started" : "Paused: Accessibility permission is missing"
-            await pause(reason: reason)
+            await suspend(reason: reason)
             return
         }
 
@@ -111,14 +150,12 @@ final class AppModel: ObservableObject {
             let valid = try await mouse.verifyClaim()
             guard enabled, !busy, epoch == operationEpoch else { return }
             if !valid {
-                await pause(
-                    reason: "Button control was reset. Discover and enable again.", forgetConnection: true)
+                await suspend(reason: "Button control was reset; reconnecting…", forgetConnection: true)
             }
         } catch {
             guard enabled, !busy, epoch == operationEpoch else { return }
             append(error.localizedDescription)
-            await pause(
-                reason: "Mouse stopped responding. Reconnect and Discover again.", forgetConnection: true)
+            await suspend(reason: "Waiting for the mouse to reconnect", forgetConnection: true)
         }
     }
 
@@ -138,19 +175,13 @@ final class AppModel: ObservableObject {
 
     func discover() {
         guard !enabled, !busy, !needsRelease else { return }
-        do {
-            mouse.forgetConnection()
-            connected = false
-            try mouse.start()
-            status = "Looking for your MX Master 3S…"
-        } catch {
-            status = error.localizedDescription
-            append(status)
-        }
+        mouse.forgetConnection()
+        connected = false
+        connectIfNeeded()
     }
 
     func enable() async {
-        guard !busy, !enabled, !needsRelease else { return }
+        guard !busy, !enabled, !needsRelease, !sleeping, !quitting else { return }
         refreshPermissions()
         guard !logitechRunning else {
             status = "Stop Logitech's background agent before enabling."
@@ -176,10 +207,11 @@ final class AppModel: ObservableObject {
                 try await mouse.release()
                 return
             }
+            if !preferences.resumeMappings { preferences.resumeMappings = true }
             enabled = true
             status =
                 preferences.testMode
-                ? "Test mode active · Forward and zoom actions are logged"
+                ? "Test mode active · button actions are logged"
                 : "Selected button mappings active"
             append(status)
         } catch {
@@ -188,9 +220,13 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func pause(reason: String = "Paused · buttons returned to the mouse", forgetConnection: Bool = false)
-        async
-    {
+    func pause() async {
+        guard !busy else { return }
+        if preferences.resumeMappings { preferences.resumeMappings = false }
+        await suspend(reason: "Paused · buttons returned to the mouse")
+    }
+
+    private func suspend(reason: String, forgetConnection: Bool = false) async {
         guard !busy else { return }
         operationEpoch += 1
         let epoch = operationEpoch
@@ -222,7 +258,7 @@ final class AppModel: ObservableObject {
         performZoom(zoom.cancel())
         holdTask?.cancel()
         holdTask = nil
-        interpreter.cancel()
+        sideButtons.cancel()
     }
 
     private func physicalPress(_ control: MouseControl, down: Bool) {
@@ -241,36 +277,48 @@ final class AppModel: ObservableObject {
             }
             return
         }
-        guard down != interpreter.isPressed else { return }
-        if down {
-            interpreter.down(
-                at: ProcessInfo.processInfo.systemUptime,
-                threshold: preferences.holdMilliseconds / 1000)
-            lastAction = "Forward pressed…"
+        guard down != sideButtons.isPressed(control) else { return }
+        if let action = sideButtons.update(
+            control, down: down, at: ProcessInfo.processInfo.systemUptime,
+            holdThreshold: preferences.forwardHoldEnabled ? preferences.holdMilliseconds / 1000 : nil)
+        {
+            perform(action)
+        }
+        if down { lastAction = "\(control.name) pressed…" }
+        guard control == .forward else { return }
+        if down && preferences.forwardHoldEnabled {
             let delay = preferences.holdMilliseconds
             holdTask = Task { [weak self] in
                 do { try await Task.sleep(for: .milliseconds(delay)) } catch { return }
                 guard let self, self.enabled else { return }
-                if let action = self.interpreter.advance(to: ProcessInfo.processInfo.systemUptime) {
+                if let action = self.sideButtons.advance(to: ProcessInfo.processInfo.systemUptime) {
                     self.perform(action)
                 }
             }
         } else {
             holdTask?.cancel()
             holdTask = nil
-            if let action = interpreter.up(at: ProcessInfo.processInfo.systemUptime) { perform(action) }
         }
     }
 
-    private func perform(_ action: PressInterpreter.Action) {
-        let label =
-            action == .forward
-            ? "Click → Forward (⌘])" : "Hold → \(preferences.shortcut?.label ?? "shortcut not set")"
+    private func perform(_ action: SideButtonInterpreter.Action) {
+        let label: String
+        let shortcut: Shortcut?
+        switch action {
+        case .back:
+            label = "Click → Back (⌘[)"
+            shortcut = KeyboardOutput.back
+        case .forward:
+            label = "Click → Forward (⌘])"
+            shortcut = KeyboardOutput.forward
+        case .shortcut:
+            label = "Hold → \(preferences.shortcut?.label ?? "shortcut not set")"
+            shortcut = preferences.shortcut
+        }
         lastAction = (preferences.testMode ? "Test: " : "") + label
         append(lastAction)
         guard !preferences.testMode else { return }
-        guard let shortcut = action == .forward ? KeyboardOutput.forward : preferences.shortcut,
-            KeyboardOutput.send(shortcut)
+        guard let shortcut, KeyboardOutput.send(shortcut)
         else {
             status = "Shortcut could not be sent. Check Accessibility."
             return
@@ -332,7 +380,9 @@ final class AppModel: ObservableObject {
     }
 
     func quitSafely() async -> Bool {
-        await pause()
+        quitting = true
+        defer { quitting = false }
+        await suspend(reason: "Stopped · buttons returned to the mouse")
         if !mouse.claimed { return true }
         let alert = NSAlert()
         alert.messageText = "Mouse buttons could not be restored"

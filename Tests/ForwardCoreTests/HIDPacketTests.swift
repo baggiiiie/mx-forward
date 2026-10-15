@@ -19,9 +19,9 @@ final class HIDPacketTests {
     func testLongForwardClaimOnlyUpdatesItsReportingFlags() {
         let bytes = HIDPacket.request(
             device: 1, feature: 12, function: 3,
-            softwareID: 9, payload: [0, 86, 0x0B, 0, 86])
+            softwareID: 9, payload: [0, 86, 0x2B, 0, 86])
         expectEqual(bytes.count, 20)
-        expectEqual(Array(bytes.prefix(9)), [0x11, 1, 12, 0x39, 0, 86, 11, 0, 86])
+        expectEqual(Array(bytes.prefix(9)), [0x11, 1, 12, 0x39, 0, 86, 0x2B, 0, 86])
         expectEqual(HIDPacket.parse(bytes)?.function, 3)
     }
     func testTruncatedAndUnknownReportsRejected() {
@@ -41,10 +41,11 @@ final class HIDPacketTests {
         }
     }
     func testSimultaneousControlsAndRelease() {
-        var down: [UInt8] = [0x11, 1, 12, 0, 0, 86, 0, 195] + Array(repeating: 0, count: 12)
-        expectEqual(HIDPacket.parse(down)?.pressedControls, [86, 195])
+        var down: [UInt8] = [0x11, 1, 12, 0, 0, 83, 0, 86, 0, 196] + Array(repeating: 0, count: 10)
+        expectEqual(HIDPacket.parse(down)?.pressedControls, [83, 86, 196])
         down[5] = 0
         down[7] = 0
+        down[9] = 0
         expectEqual(HIDPacket.parse(down)?.pressedControls, [])
     }
 }

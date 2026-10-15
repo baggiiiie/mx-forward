@@ -37,7 +37,8 @@ enum RunChecks {
         packet.testTruncatedAndUnknownReportsRejected()
         packet.testBothErrorFormatsMatchOriginalRequest()
         packet.testSimultaneousControlsAndRelease()
-        let reporting = ForwardReportingTests()
+        let reporting = ControlReportingTests()
+        reporting.testBackReportingPreservesRemapAndDisablesRawMovement()
         reporting.testTopButtonClaimsAndClearsRawMovement()
         reporting.testRejectsMissingRemapBytes()
         reporting.testRejectsAnotherControl()
@@ -54,10 +55,19 @@ enum RunChecks {
         zoom.testDuplicateDownDoesNotRestartGesture()
         zoom.testMacOSDecodesNativePinchPhases()
         zoom.testMacOSDecodesSmartZoom()
+        let side = SideButtonTests()
+        side.testPlainClicksNavigateOnceOnRelease()
+        side.testPlainForwardHasNoHoldAction()
+        side.testRepeatedReportsDoNotResetTheHold()
+        side.testShortForwardPressStillNavigatesWithHoldEnabled()
+        side.testDelayedTimerDoesNotTurnAHoldIntoNavigation()
+        side.testBackDoesNotInterruptAForwardHold()
+        side.testCancelClearsBothButtonsWithoutAnAction()
+        side.testTopButtonIsIgnored()
         if failureCount != 0 {
             print("\(failureCount) failures")
             exit(1)
         }
-        print("PASS: 29 scenarios (Forward, zoom gestures, HID++ reporting, native macOS event decoding)")
+        print("PASS: 38 scenarios (side buttons, holds, zoom, HID++ reporting, native macOS event decoding)")
     }
 }
