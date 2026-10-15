@@ -134,6 +134,34 @@ struct ContentView: View {
                         }
                     }.padding(4)
                 }.disabled(model.enabled || model.busy || model.needsRelease)
+                GroupBox("Main scroll wheel") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Toggle("Control main wheel", isOn: $model.preferences.wheelEnabled)
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Text("Scroll speed")
+                                Slider(value: $model.preferences.wheelSpeed, in: 0.25...6, step: 0.05)
+                                    .accessibilityLabel("Main wheel scroll speed")
+                                Text("\(Int(model.preferences.wheelSpeed * 100))%")
+                                    .monospacedDigit().frame(width: 48, alignment: .trailing)
+                            }
+                            Toggle("Natural scrolling", isOn: $model.preferences.wheelNatural)
+                            Picker("Wheel mode", selection: $model.preferences.wheelMode) {
+                                ForEach(WheelMode.allCases) { mode in Text(mode.label).tag(mode) }
+                            }
+                            Text(
+                                "Ratchet stays notched. Free-spin removes the notches. Keep current mode preserves your mouse’s existing SmartShift behavior."
+                            )
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        }.disabled(!model.preferences.wheelEnabled)
+                        Text(
+                            "Applies to this mouse’s main wheel. Pause restores native scrolling and the previous wheel mode."
+                        )
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }.padding(4)
+                }.disabled(model.enabled || model.busy || model.needsRelease)
                 Button("Open zoom verification") { model.showZoomTest() }
                 GroupBox("Try the timing") {
                     VStack(alignment: .leading, spacing: 8) {

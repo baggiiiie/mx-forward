@@ -66,7 +66,34 @@ private enum HardwareChecks {
         try require(letterDown.flags == .maskCommand, "Arrow flags leaked onto browser navigation")
         print(
             "PASS: window navigation generates complete arrow-key presses without changing letter shortcuts")
+        for pixels: Int32 in [-80, 40] {
+            guard let event = WheelOutput.event(pixels: pixels), let native = NSEvent(cgEvent: event) else {
+                throw MouseError.message("Could not create scroll event")
+            }
+            try require(
+                native.type == .scrollWheel && native.hasPreciseScrollingDeltas
+                    && native.scrollingDeltaY == CGFloat(pixels) && native.scrollingDeltaX == 0,
+                "Scroll output lost pixel distance or changed horizontal scrolling")
+        }
+        print("PASS: macOS decodes precise vertical scroll events in both directions")
+        let mouse = BoltMouse()
+        try mouse.start()
+        try await waitFor { mouse.connection != nil }
+        do {
+            for mode in WheelMode.allCases {
+                try await mouse.claim([], wheelMode: mode)
+                try require(try await mouse.verifyClaim(), "Wheel-only claim was not confirmed")
+                try await mouse.release()
+                try require(!mouse.claimed, "Wheel-only release failed")
+                print("PASS: main wheel \(mode.label) is applied, verified, and restored")
+            }
+        } catch {
+            try? await mouse.release()
+            throw error
+        }
         var preferences = Preferences()
+        preferences.wheelEnabled = true
+        preferences.wheelMode = .ratchet
         preferences.testMode = true
         preferences.resumeMappings = true
         preferences.save()
@@ -77,7 +104,8 @@ private enum HardwareChecks {
             for name in preferences.controls.sorted().map(\.name) {
                 try require(model.log.contains { $0.contains("Claimed \(name)") }, "Missing \(name) claim")
             }
-            print("PASS: startup discovers and claims all selected buttons")
+            try require(model.log.contains { $0.contains("Claimed main wheel") }, "Missing wheel claim")
+            print("PASS: startup discovers and claims all selected buttons and main wheel")
 
             let notifications = NSWorkspace.shared.notificationCenter
             notifications.post(name: NSWorkspace.willSleepNotification, object: nil)

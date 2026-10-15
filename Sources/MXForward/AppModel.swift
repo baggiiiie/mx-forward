@@ -27,6 +27,7 @@ final class AppModel: ObservableObject {
     private let mouse = BoltMouse()
     private var sideButtons = SideButtonInterpreter()
     private var zoom = ZoomInterpreter()
+    private var wheel = WheelInterpreter()
     private var thumb = ThumbGestureInterpreter()
     private var movementButtons = MovementButtons()
     private var zoomAnchor = CGPoint.zero
@@ -34,7 +35,7 @@ final class AppModel: ObservableObject {
 
     var canEnable: Bool {
         connected && !enabled && !busy && !sleeping && !quitting && !needsRelease
-            && !logitechRunning && !preferences.controls.isEmpty
+            && !logitechRunning && preferences.hasMappings
             && (preferences.testMode
                 || (accessibility && preferences.shortcutsReady))
     }
@@ -60,6 +61,19 @@ final class AppModel: ObservableObject {
             case .thumb:
                 if let action = self.thumb.move(dx: dx, dy: dy) { self.performThumb(action) }
             default: break
+            }
+        }
+        mouse.onScroll = { [weak self] scroll, multiplier in
+            guard let self, self.enabled else { return }
+            let pixels = self.wheel.pixels(
+                for: scroll, multiplier: multiplier, speed: self.preferences.wheelSpeed,
+                natural: self.preferences.wheelNatural)
+            guard pixels != 0 else { return }
+            let label =
+                (self.preferences.testMode ? "Test: " : "") + "Main wheel → \(pixels > 0 ? "up" : "down")"
+            if self.lastAction != label { self.lastAction = label }
+            if !self.preferences.testMode && !WheelOutput.send(pixels: pixels) {
+                self.status = "Scrolling could not be sent. Check Accessibility."
             }
         }
         mouse.onDisconnect = { [weak self] in
@@ -194,11 +208,12 @@ final class AppModel: ObservableObject {
             status = "Stop Logitech's background agent before enabling."
             return
         }
-        guard !preferences.controls.isEmpty,
+        guard preferences.hasMappings,
             preferences.testMode
                 || (accessibility && preferences.shortcutsReady)
         else {
-            status = "Choose a button, grant Accessibility, and record any selected keyboard shortcuts."
+            status =
+                "Choose a mouse control, grant Accessibility, and record any selected keyboard shortcuts."
             return
         }
         busy = true
@@ -209,7 +224,8 @@ final class AppModel: ObservableObject {
         operationEpoch += 1
         let epoch = operationEpoch
         do {
-            try await mouse.claim(preferences.controls)
+            try await mouse.claim(
+                preferences.controls, wheelMode: preferences.wheelEnabled ? preferences.wheelMode : nil)
             guard epoch == operationEpoch else {
                 try await mouse.release()
                 return
@@ -218,8 +234,8 @@ final class AppModel: ObservableObject {
             enabled = true
             status =
                 preferences.testMode
-                ? "Test mode active · button actions are logged"
-                : "Selected button mappings active"
+                ? "Test mode active · mouse actions are shown"
+                : "Selected mouse mappings active"
             append(status)
         } catch {
             if epoch == operationEpoch { status = error.localizedDescription }
@@ -263,6 +279,7 @@ final class AppModel: ObservableObject {
 
     private func cancelInput() {
         performZoom(zoom.cancel())
+        wheel.cancel()
         thumb.cancel()
         movementButtons.cancel()
         holdTask?.cancel()

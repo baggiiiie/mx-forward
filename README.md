@@ -10,10 +10,11 @@ A small native macOS app for the MX Master 3S with a **Logi Bolt USB receiver**.
 - Top button: choose Smart Zoom, a recorded keyboard shortcut, or no action for a click. Hold and move up/down for continuous pinch zoom.
 - Horizontal top-button movement does not rotate or trigger smart zoom.
 - Separate feature toggles let you test zoom without configuring Forward. Hold zoom speed ranges from 25–600%, initially 200%.
+- Main-wheel control: scroll speed (25–600%), natural or standard direction, and ratchet/free-spin modes. Keep current mode preserves existing SmartShift behavior. Initially off.
 - Test mode shows actions without sending them. Pause restores the selected buttons.
 - Automatic discovery on launch, wake, and reconnect. After you Enable once, mappings resume automatically; an explicit Pause keeps them off.
 
-The app talks directly to the Bolt receiver. Logitech's device agent must stay stopped; there is no Logitech runtime dependency. Rotation and hardware-settings controls are not implemented yet.
+The app talks directly to the Bolt receiver. Logitech's device agent must stay stopped; there is no Logitech runtime dependency. Rotation, pointer-speed controls, and per-app profiles are not implemented.
 
 ## Build
 
@@ -37,7 +38,8 @@ Quit MX Forward before rebuilding. Builds are ad-hoc signed by default; macOS ma
 5. Keep **Test mode** on, click **Enable**, then click both side buttons. Check the displayed Forward and Back actions. If Forward hold is enabled, check that a long press sends only its shortcut.
 6. For zoom alone, turn **Forward** and **Back** off and keep **Enable top button** on. Choose a **Single click** action. Record its shortcut if you choose **Keyboard shortcut**.
 7. Click **Pause**, turn Test mode off, then **Enable**. Point at content in a browser or image viewer. Click the top button for your chosen action; hold it and move up to zoom in or down to zoom out. Pause to adjust **Hold zoom speed**; higher values need less mouse movement. Click and hold actions are independent.
-8. **Open zoom verification** provides a native test canvas. Its buttons send real macOS gesture events; its status confirms whether they reached `magnify` / `smartMagnify` handlers. Test mode suppresses mouse actions, but these explicit verification buttons still send events into this test window.
+8. For the main wheel, Pause, turn **Control main wheel** on, choose **Scroll speed**, **Natural scrolling**, and **Wheel mode**, then Enable. Ratchet locks the notches; Free-spin removes them. Keep current mode leaves the existing SmartShift mode and threshold untouched. These controls affect only the MX Master 3S main wheel.
+9. **Open zoom verification** provides a native test canvas. Its buttons send real macOS gesture events; its status confirms whether they reached `magnify` / `smartMagnify` handlers. Test mode suppresses mouse actions, but these explicit verification buttons still send events into this test window.
 
 ```sh
 ./scripts/logitech-session.sh stop
@@ -54,7 +56,8 @@ The stop command disables Logitech's automatic launch and stops its device agent
 - Shortcuts store a keycode and modifiers and target the active app when they fire. Pause before changing the mapping.
 - Closing the window keeps the app in the menu bar, where you can Pause or Quit.
 - Sleep, disconnect, permission loss, or a restarted Logitech agent suspends the mapping. It reconnects and resumes once the mouse and permissions are available and Logitech's agent is stopped. Explicit Pause disables automatic resume; Enable turns it back on. Quit restores the hardware while preserving this choice for the next launch.
-- Pause and Quit clear diversion for the selected buttons and preserve their current hardware remap targets. Raw movement reporting is also cleared for both gesture buttons. Sleep cleanup sends restoration commands without waiting for replies.
+- Main-wheel control reads high-resolution wheel reports directly from Bolt and sends vertical pixel scrolling. At 100%, one notch is 40 pixels; speed is linear. The thumb wheel is unchanged. Keyboard modifiers are preserved. This does not add inertial scrolling.
+- Pause and Quit restore native main-wheel scrolling and the prior wheel mode/SmartShift threshold, then clear diversion for the selected buttons and preserve their current hardware remap targets. Raw movement reporting is also cleared for both gesture buttons. Sleep cleanup sends restoration commands without waiting for replies.
 - Zoom uses native magnification and smart-zoom events, not Command-plus/minus. An app must support those gestures. The adapter uses undocumented macOS gesture fields, so compatibility is verified against the installed OS. The sensitivity control tunes movement distance; exact Logitech sensitivity has not been measured.
 - On button-feature version 5 and later, the first raw movement report is discarded to avoid the MX Master 3S stale-movement jump. A small dead zone separates clicks from gestures.
 - After a crash, forced quit, or failed restoration, **turn the mouse off and on**. The app reconnects automatically; click Enable if you previously paused it.
@@ -62,7 +65,7 @@ The stop command disables Logitech's automatic launch and stops its device agent
 
 ## Validation
 
-The 51 core checks cover independent Forward/Back clicks, Forward holds, thumb gestures in all directions, overlapping gesture buttons, cancellation, continuous zoom, jitter, the stale first-report filter, signed movement parsing, and button reporting. macOS also decodes the generated events as native magnify / smart-magnify events with the expected phases.
+The 57 core checks cover independent Forward/Back clicks, Forward holds, thumb gestures in all directions, overlapping gesture buttons, cancellation, continuous zoom, jitter, the stale first-report filter, signed movement parsing, button reporting, wheel packet decoding, speed/direction, and fractional-pixel accumulation. macOS also decodes the generated events as native magnify / smart-magnify events with the expected phases.
 
 Run the optional hardware checks with MX Forward quit, Logitech's device agent stopped, and an awake MX Master 3S connected through Bolt:
 
@@ -70,12 +73,14 @@ Run the optional hardware checks with MX Forward quit, Logitech's device agent s
 ./scripts/check-hardware.sh
 ```
 
-These use separate test preferences and send no keyboard or zoom actions. They check system-shortcut parsing and arrow-key event flags, claim and restore the selected buttons, simulate sleep/wake notifications, check that Enable is ignored during sleep, and verify Pause and quit behavior. They do not put the Mac to sleep.
+These use separate test preferences and send no keyboard, zoom, or scroll actions. They check system-shortcut parsing and arrow-key event flags, claim and restore the selected buttons, simulate sleep/wake notifications, check that Enable is ignored during sleep, and verify Pause and quit behavior. They also verify all three wheel-mode choices and restoration on the real mouse, and decode generated pixel-scroll events with macOS. They do not put the Mac to sleep.
 
-Verified on the MX Master 3S in Bolt slot 2 with button-feature version 5. Manual checks confirmed Back, Forward, the Forward hold shortcut, smart zoom, and held zoom at 200%. Manual checks also confirmed thumb click/up for Mission Control, down for App Exposé, and left/right for desktop switching. The top-button keyboard-shortcut click action still needs a manual check.
+Verified on the MX Master 3S in Bolt slot 2 with button-feature version 5. Manual checks confirmed Back, Forward, the Forward hold shortcut, smart zoom, and held zoom at 200%. Manual checks also confirmed thumb click/up for Mission Control, down for App Exposé, and left/right for desktop switching. Live main-wheel scrolling also works in the installed build; the speed, direction, and wheel-mode controls were tried without a reported failure. The top-button keyboard-shortcut click action still needs a manual check.
 
 Protocol references: [MXControl's Special Keys implementation](https://github.com/wiscaksono/MXControl/blob/main/Sources/MXControlHIDPP/Features/SpecialKeysFeature.swift) and [USB transport](https://github.com/wiscaksono/MXControl/blob/main/Sources/MXControlHIDPP/Transport/USBTransport.swift). No MXControl source is included here.
 
 Button control IDs are documented in [Solaar's control table](https://github.com/pwr-Solaar/Solaar/blob/master/lib/logitech_receiver/special_keys.py).
 
 Zoom event reference: [Mac Mouse Fix TouchSimulator](https://github.com/noah-nuebling/mac-mouse-fix/blob/master/Helper/Core/Touch/TouchSimulator.m). First-report quirk: [Solaar issue 1662](https://github.com/pwr-Solaar/Solaar/issues/1662). These references document protocol facts; their source is not included here.
+
+Main-wheel protocol reference: [Solaar high-resolution wheel and SmartShift settings](https://github.com/pwr-Solaar/Solaar/blob/master/lib/logitech_receiver/settings_templates.py). No Solaar source is included here.

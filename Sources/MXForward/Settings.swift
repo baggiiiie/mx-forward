@@ -45,6 +45,18 @@ enum TopClickAction: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum WheelMode: String, Codable, CaseIterable, Identifiable {
+    case unchanged, ratchet, freeSpin
+    var id: Self { self }
+    var label: String {
+        switch self {
+        case .unchanged: return "Keep current mode"
+        case .ratchet: return "Ratchet"
+        case .freeSpin: return "Free-spin"
+        }
+    }
+}
+
 struct Preferences: Codable {
     var holdMilliseconds: Double = 400
     var shortcut: Shortcut?
@@ -56,9 +68,15 @@ struct Preferences: Codable {
     var topZoomEnabled = true
     var thumbGesturesEnabled = true
     var thumbSensitivity = 1.0
+    var wheelEnabled = false
+    var wheelSpeed = 1.0
+    var wheelNatural = true
+    var wheelMode = WheelMode.unchanged
     var zoomSensitivity = 2.0
     var topClickAction = TopClickAction.smartZoom
     var topClickShortcut: Shortcut?
+
+    var hasMappings: Bool { !controls.isEmpty || wheelEnabled }
 
     var shortcutsReady: Bool {
         (!forwardEnabled || !forwardHoldEnabled || shortcut != nil)
@@ -81,6 +99,7 @@ struct Preferences: Codable {
         case backEnabled, forwardHoldEnabled
         case resumeMappings
         case thumbGesturesEnabled, thumbSensitivity
+        case wheelEnabled, wheelSpeed, wheelNatural, wheelMode
     }
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -95,6 +114,10 @@ struct Preferences: Codable {
         topZoomEnabled = try values.decodeIfPresent(Bool.self, forKey: .topZoomEnabled) ?? true
         thumbGesturesEnabled = try values.decodeIfPresent(Bool.self, forKey: .thumbGesturesEnabled) ?? true
         thumbSensitivity = try values.decodeIfPresent(Double.self, forKey: .thumbSensitivity) ?? 1
+        wheelEnabled = try values.decodeIfPresent(Bool.self, forKey: .wheelEnabled) ?? false
+        wheelSpeed = try values.decodeIfPresent(Double.self, forKey: .wheelSpeed) ?? 1
+        wheelNatural = try values.decodeIfPresent(Bool.self, forKey: .wheelNatural) ?? true
+        wheelMode = try values.decodeIfPresent(WheelMode.self, forKey: .wheelMode) ?? .unchanged
         zoomSensitivity = try values.decodeIfPresent(Double.self, forKey: .zoomSensitivity) ?? 2
         topClickAction =
             try values.decodeIfPresent(TopClickAction.self, forKey: .topClickAction) ?? .smartZoom
@@ -111,6 +134,8 @@ struct Preferences: Codable {
         value.zoomSensitivity = min(6, max(0.25, value.zoomSensitivity))
         if !value.thumbSensitivity.isFinite { value.thumbSensitivity = 1 }
         value.thumbSensitivity = min(3, max(0.25, value.thumbSensitivity))
+        if !value.wheelSpeed.isFinite { value.wheelSpeed = 1 }
+        value.wheelSpeed = min(6, max(0.25, value.wheelSpeed))
         return value
     }
     func save() {

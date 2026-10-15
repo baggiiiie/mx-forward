@@ -39,10 +39,21 @@ final class BoltMouse {
     private var nextSoftwareID: UInt8 = 8
     private(set) var connection: Connection?
     private var claims: [MouseControl: ControlReporting] = [:]
-    var claimed: Bool { !claims.isEmpty }
+    private struct WheelClaim {
+        let feature: UInt8
+        let shiftFeature: UInt8
+        let multiplier: UInt8
+        let originalMode: UInt8
+        let originalShift: [UInt8]
+        let desiredMode: UInt8
+        let desiredShift: [UInt8]?
+    }
+    private var wheelClaim: WheelClaim?
+    var claimed: Bool { !claims.isEmpty || wheelClaim != nil }
     var onStatus: (String) -> Void = { _ in }
     var onPress: (MouseControl, Bool) -> Void = { _, _ in }
     var onMovement: (Int16, Int16) -> Void = { _, _ in }
+    var onScroll: (WheelScroll, UInt8) -> Void = { _, _ in }
     var onDisconnect: () -> Void = {}
     var onLog: (String) -> Void = { _ in }
 
@@ -214,10 +225,12 @@ final class BoltMouse {
         return response.payload[0]
     }
 
-    func claim(_ controls: Set<MouseControl>) async throws {
+    func claim(_ controls: Set<MouseControl>, wheelMode: WheelMode? = nil) async throws {
         guard let c = connection else { throw MouseError.message("Discover your mouse first.") }
         guard !claimed else { return }
-        guard !controls.isEmpty else { throw MouseError.message("Choose a button to enable.") }
+        guard !controls.isEmpty || wheelMode != nil else {
+            throw MouseError.message("Choose a mouse control to enable.")
+        }
         let unavailable = controls.subtracting(c.availableControls)
         if !unavailable.isEmpty {
             throw MouseError.message(
@@ -240,6 +253,7 @@ final class BoltMouse {
                 }
                 onLog("Claimed \(control.name)\(control.reportsMovement ? " with raw movement" : "")")
             }
+            if let wheelMode { try await claimWheel(wheelMode, c) }
         } catch {
             // Cleanup must still run when the caller was cancelled.
             try? await Task { try await self.release() }.value
@@ -250,6 +264,9 @@ final class BoltMouse {
     func release() async throws {
         guard claimed, let c = connection else { return }
         var failure: Error?
+        if wheelClaim != nil {
+            do { try await releaseWheel(c) } catch { failure = error }
+        }
         for control in claims.keys.sorted() {
             do {
                 let settings = try await readReporting(control, c)
@@ -270,16 +287,22 @@ final class BoltMouse {
     /// Sleep cleanup cannot wait for a reply on the main run loop.
     func releaseImmediately() -> Bool {
         guard let c = connection, let device = devices[c.endpoint] else { return !claimed }
+        if let wheel = wheelClaim {
+            let shiftRestored =
+                wheel.desiredShift == nil
+                || writeImmediately(
+                    device, c, feature: wheel.shiftFeature, function: 1, payload: wheel.originalShift)
+            let modeRestored = writeImmediately(
+                device, c, feature: wheel.feature, function: 2, payload: [wheel.originalMode])
+            if shiftRestored && modeRestored { wheelClaim = nil }
+        }
         for control in claims.keys.sorted() {
             guard let settings = claims[control] else { continue }
-            let bytes = HIDPacket.request(
-                device: c.slot, feature: c.feature, function: 3,
-                softwareID: 15, payload: settings.parameters(divert: false))
-            let result = bytes.withUnsafeBufferPointer {
-                IOHIDDeviceSetReport(
-                    device, kIOHIDReportTypeOutput, CFIndex(bytes[0]), $0.baseAddress!, bytes.count)
+            if writeImmediately(
+                device, c, feature: c.feature, function: 3, payload: settings.parameters(divert: false))
+            {
+                claims.removeValue(forKey: control)
             }
-            if result == kIOReturnSuccess { claims.removeValue(forKey: control) }
         }
         return !claimed
     }
@@ -293,6 +316,7 @@ final class BoltMouse {
                 state.rawMovement == control.reportsMovement
             else { return false }
         }
+        if wheelClaim != nil { return try await verifyWheel(c) }
         return true
     }
 
@@ -324,6 +348,7 @@ final class BoltMouse {
         if connection?.endpoint == id {
             connection = nil
             claims.removeAll()
+            wheelClaim = nil
             onDisconnect()
             onStatus("Bolt receiver disconnected")
         }
@@ -348,8 +373,13 @@ final class BoltMouse {
             return
         }
         guard claimed, let c = connection, c.endpoint == endpoint, c.slot == packet.device,
-            c.feature == packet.feature, packet.softwareID == 0
+            packet.softwareID == 0
         else { return }
+        if let wheel = wheelClaim, packet.feature == wheel.feature {
+            if let scroll = WheelScroll(packet) { onScroll(scroll, wheel.multiplier) }
+            return
+        }
+        guard c.feature == packet.feature else { return }
         if packet.function == 0 {
             for control in claims.keys.sorted() {
                 onPress(control, packet.pressedControls.contains(control.rawValue))
@@ -397,5 +427,87 @@ final class BoltMouse {
         }
         try Task.checkCancellation()
         return response
+    }
+}
+
+extension BoltMouse {
+    private func claimWheel(_ mode: WheelMode, _ c: Connection) async throws {
+        let wheel = try await feature(0x2121, c.endpoint, c.slot)
+        let shift = try await feature(0x2110, c.endpoint, c.slot)
+        let caps = try await request(c.endpoint, c.slot, wheel, 0)
+        let currentMode = try await request(c.endpoint, c.slot, wheel, 1)
+        let currentShift = try await request(c.endpoint, c.slot, shift, 0)
+        guard caps.payload[0] > 0, connection == c else {
+            throw MouseError.message("Main-wheel settings unavailable. Reconnect the mouse.")
+        }
+        let desiredShift: [UInt8]?
+        switch mode {
+        case .unchanged: desiredShift = nil
+        case .ratchet: desiredShift = [2, 255]
+        case .freeSpin: desiredShift = [1, currentShift.payload[1]]
+        }
+        let settings = WheelClaim(
+            feature: wheel, shiftFeature: shift, multiplier: caps.payload[0],
+            // Clear diversion on restoration, including after an interrupted earlier session.
+            originalMode: currentMode.payload[0] & ~1,
+            originalShift: Array(currentShift.payload.prefix(2)),
+            desiredMode: (currentMode.payload[0] | 3) & ~4, desiredShift: desiredShift)
+        wheelClaim = settings
+        if let desiredShift {
+            _ = try await request(c.endpoint, c.slot, shift, 1, desiredShift)
+        }
+        _ = try await request(c.endpoint, c.slot, wheel, 2, [settings.desiredMode])
+        guard try await verifyWheel(c) else {
+            throw MouseError.message("The mouse did not confirm main-wheel control.")
+        }
+        onLog("Claimed main wheel · \(mode.label)")
+    }
+
+    private func verifyWheel(_ c: Connection) async throws -> Bool {
+        guard let wheel = wheelClaim else { return false }
+        let mode = try await request(c.endpoint, c.slot, wheel.feature, 1)
+        guard mode.payload[0] == wheel.desiredMode else { return false }
+        if let desired = wheel.desiredShift {
+            let shift = try await request(c.endpoint, c.slot, wheel.shiftFeature, 0)
+            guard Array(shift.payload.prefix(2)) == desired else { return false }
+        }
+        return true
+    }
+
+    private func releaseWheel(_ c: Connection) async throws {
+        guard let wheel = wheelClaim else { return }
+        // Restore native scrolling even if the ratchet command fails.
+        var failure: Error?
+        if wheel.desiredShift != nil {
+            do {
+                _ = try await request(c.endpoint, c.slot, wheel.shiftFeature, 1, wheel.originalShift)
+                let shift = try await request(c.endpoint, c.slot, wheel.shiftFeature, 0)
+                guard Array(shift.payload.prefix(2)) == wheel.originalShift else {
+                    throw MouseError.message("Mouse did not confirm the previous wheel mode.")
+                }
+            } catch { failure = error }
+        }
+        do {
+            _ = try await request(c.endpoint, c.slot, wheel.feature, 2, [wheel.originalMode])
+            let mode = try await request(c.endpoint, c.slot, wheel.feature, 1)
+            guard mode.payload[0] == wheel.originalMode else {
+                throw MouseError.message("Mouse did not confirm native scrolling.")
+            }
+        } catch { failure = failure ?? error }
+        if let failure { throw failure }
+        wheelClaim = nil
+        onLog("Restored main wheel")
+    }
+
+    private func writeImmediately(
+        _ device: IOHIDDevice, _ c: Connection, feature: UInt8, function: UInt8, payload: [UInt8]
+    ) -> Bool {
+        let bytes = HIDPacket.request(
+            device: c.slot, feature: feature, function: function, softwareID: 15, payload: payload)
+        return bytes.withUnsafeBufferPointer {
+            IOHIDDeviceSetReport(
+                device, kIOHIDReportTypeOutput, CFIndex(bytes[0]), $0.baseAddress!, bytes.count)
+                == kIOReturnSuccess
+        }
     }
 }

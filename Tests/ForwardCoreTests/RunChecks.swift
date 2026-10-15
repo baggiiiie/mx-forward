@@ -79,10 +79,19 @@ enum RunChecks {
         movement.testOverlapCancelsUntilBothButtonsAreReleased()
         movement.testRepressingDuringOverlapDoesNotStartAnotherGesture()
         movement.testCancelClearsOverlapAndSideButtonsAreIgnored()
+        let wheel = WheelTests()
+        wheel.testWheelNotificationsDecodeSignedLimits()
+        wheel.testHighAndLowResolutionNotchesHaveTheSameDistance()
+        wheel.testSpeedAndDirection()
+        wheel.testSlowHighResolutionMovementKeepsFractionalPixels()
+        wheel.testReversalAndCancellationClearRemainders()
+        wheel.testMaximumPacketAndSpeedDoNotOverflow()
         if failureCount != 0 {
             print("\(failureCount) failures")
             exit(1)
         }
-        print("PASS: 51 scenarios (side buttons, thumb gestures, zoom, HID++ reporting, native macOS events)")
+        print(
+            "PASS: 57 scenarios (side buttons, thumb gestures, wheel, zoom, HID++ reporting, native macOS events)"
+        )
     }
 }
