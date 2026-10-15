@@ -19,8 +19,8 @@ cat > "$app_path/Contents/Info.plist" <<'PLIST'
 <key>CFBundleDisplayName</key><string>MX Forward</string>
 <key>CFBundleExecutable</key><string>MXForward</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.5.0</string>
-<key>CFBundleVersion</key><string>7</string>
+<key>CFBundleShortVersionString</key><string>0.6.2</string>
+<key>CFBundleVersion</key><string>10</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSInputMonitoringUsageDescription</key><string>Read the selected Logitech Bolt mouse buttons and held movement for shortcuts and zoom.</string>

@@ -86,12 +86,24 @@ enum RunChecks {
         wheel.testSlowHighResolutionMovementKeepsFractionalPixels()
         wheel.testReversalAndCancellationClearRemainders()
         wheel.testMaximumPacketAndSpeedDoNotOverflow()
+        wheel.testAccelerationRespondsToSpeedRatherThanNotchCount()
+        wheel.testAccelerationCanBeDisabledOrAdjusted()
+        wheel.testIdleReversalAndCancellationRestorePrecision()
+        wheel.testAccelerationIsConsistentAcrossWheelResolutions()
+        wheel.testSlowHighResolutionScrollingStaysPreciseWithAcceleration()
+        wheel.testInvalidOrRepeatedTimesAndZeroPacketsDoNotCauseJumps()
+        wheel.testTinyReportIntervalsRemainFinite()
+        wheel.testMaximumAccelerationAndPacketSizeStayBounded()
+        let horizontal = ThumbWheelTests()
+        horizontal.testDirectionChangesPreserveNativeReportingAndTouchFlags()
+        horizontal.testReversingAnAlreadyInvertedWheelPreservesOtherBits()
+        horizontal.testIncompleteSettingsAreRejected()
         if failureCount != 0 {
             print("\(failureCount) failures")
             exit(1)
         }
         print(
-            "PASS: 57 scenarios (side buttons, thumb gestures, wheel, zoom, HID++ reporting, native macOS events)"
+            "PASS: 68 scenarios (side buttons, thumb gestures, wheel, zoom, HID++ reporting, native macOS events)"
         )
     }
 }

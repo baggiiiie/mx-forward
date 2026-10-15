@@ -7,8 +7,7 @@ import IOKit.hid
 final class AppModel: ObservableObject {
     @Published var preferences = Preferences.load() {
         didSet {
-            preferences.save()
-            cancelInput()
+            settingsChanged(from: oldValue)
         }
     }
     @Published var diagnostics = false
@@ -24,7 +23,7 @@ final class AppModel: ObservableObject {
         IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
     @Published private(set) var logitechRunning = false
     @Published private(set) var needsRelease = false
-    private let mouse = BoltMouse()
+    private let mouse: BoltMouse
     private var sideButtons = SideButtonInterpreter()
     private var zoom = ZoomInterpreter()
     private var wheel = WheelInterpreter()
@@ -32,12 +31,16 @@ final class AppModel: ObservableObject {
     private var movementButtons = MovementButtons()
     private var zoomAnchor = CGPoint.zero
     private var zoomTestWindow: ZoomTestWindow?
+    private var appliedConfiguration: MouseConfiguration?
+    private var settingsTask: Task<Void, Never>?
+    private var recordingShortcut = false
+    private var heldControls = Set<MouseControl>()
+    private var suppressedControls = Set<MouseControl>()
 
     var canEnable: Bool {
         connected && !enabled && !busy && !sleeping && !quitting && !needsRelease
             && !logitechRunning && preferences.hasMappings
-            && (preferences.testMode
-                || (accessibility && preferences.shortcutsReady))
+            && (preferences.testMode || accessibility)
     }
     private var operationEpoch = 0
     private var sleeping = false
@@ -46,7 +49,8 @@ final class AppModel: ObservableObject {
     private var monitorTask: Task<Void, Never>?
     private var wakeObservers: [NSObjectProtocol] = []
 
-    init() {
+    init(mouse device: BoltMouse? = nil) {
+        self.mouse = device ?? BoltMouse()
         mouse.onStatus = { [weak self] text in
             guard let self else { return }
             self.status = text
@@ -55,7 +59,7 @@ final class AppModel: ObservableObject {
         mouse.onLog = { [weak self] in self?.append($0) }
         mouse.onPress = { [weak self] control, down in self?.physicalPress(control, down: down) }
         mouse.onMovement = { [weak self] dx, dy in
-            guard let self, self.enabled else { return }
+            guard let self, self.enabled, !self.recordingShortcut else { return }
             switch self.movementButtons.active {
             case .top: self.performZoom(self.zoom.move(dx: dx, dy: dy))
             case .thumb:
@@ -64,10 +68,11 @@ final class AppModel: ObservableObject {
             }
         }
         mouse.onScroll = { [weak self] scroll, multiplier in
-            guard let self, self.enabled else { return }
+            guard let self, self.enabled, self.preferences.wheelEnabled else { return }
             let pixels = self.wheel.pixels(
                 for: scroll, multiplier: multiplier, speed: self.preferences.wheelSpeed,
-                natural: self.preferences.wheelNatural)
+                natural: self.preferences.wheelNatural,
+                acceleration: self.preferences.wheelAcceleration, at: ProcessInfo.processInfo.systemUptime)
             guard pixels != 0 else { return }
             let label =
                 (self.preferences.testMode ? "Test: " : "") + "Main wheel → \(pixels > 0 ? "up" : "down")"
@@ -80,6 +85,7 @@ final class AppModel: ObservableObject {
             self?.operationEpoch += 1
             self?.cancelInput()
             self?.enabled = false
+            self?.appliedConfiguration = nil
             self?.needsRelease = false
             self?.append("Disconnected; waiting for the mouse to reconnect")
         }
@@ -123,6 +129,39 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func settingsChanged(from old: Preferences) {
+        preferences.save()
+        var previous = old
+        previous.resumeMappings = preferences.resumeMappings
+        guard previous != preferences else { return }
+        cancelInput(testMode: old.testMode)
+        if preferences.resumeMappings { scheduleSettingsApply() }
+    }
+
+    private func scheduleSettingsApply() {
+        settingsTask?.cancel()
+        settingsTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(120)) } catch { return }
+            self?.settingsTask = nil
+            await self?.applyCurrentSettings()
+        }
+    }
+
+    private func applyCurrentSettings() async {
+        guard !busy, !sleeping, !quitting, preferences.resumeMappings else { return }
+        if enabled && appliedConfiguration != preferences.hardwareConfiguration {
+            await suspend(reason: "Applying mouse settings…")
+        }
+        if !preferences.hasMappings && !needsRelease { status = "No mouse controls enabled" }
+        if !enabled && canEnable { await enable() }
+    }
+
+    func setRecordingShortcut(_ recording: Bool) {
+        guard recordingShortcut != recording else { return }
+        recordingShortcut = recording
+        if recording { cancelInput() }
+    }
+
     private func connectIfNeeded() {
         guard !sleeping, !quitting, !busy, !enabled, !needsRelease,
             mouse.connection == nil
@@ -141,7 +180,11 @@ final class AppModel: ObservableObject {
     private func maintainConnection() async {
         guard !sleeping, !quitting, !busy else { return }
         if enabled {
-            await checkMouse()
+            if appliedConfiguration != preferences.hardwareConfiguration {
+                await applyCurrentSettings()
+            } else {
+                await checkMouse()
+            }
             return
         }
         guard !logitechRunning else {
@@ -208,29 +251,33 @@ final class AppModel: ObservableObject {
             status = "Stop Logitech's background agent before enabling."
             return
         }
-        guard preferences.hasMappings,
-            preferences.testMode
-                || (accessibility && preferences.shortcutsReady)
+        guard preferences.hasMappings, preferences.testMode || accessibility
         else {
             status =
-                "Choose a mouse control, grant Accessibility, and record any selected keyboard shortcuts."
+                "Choose a mouse control and grant Accessibility for live actions."
             return
         }
         busy = true
         defer {
             busy = false
             needsRelease = mouse.claimed && !enabled
+            if enabled && appliedConfiguration != preferences.hardwareConfiguration {
+                scheduleSettingsApply()
+            }
         }
         operationEpoch += 1
         let epoch = operationEpoch
+        let configuration = preferences.hardwareConfiguration
         do {
             try await mouse.claim(
-                preferences.controls, wheelMode: preferences.wheelEnabled ? preferences.wheelMode : nil)
+                configuration.controls, wheelMode: configuration.wheelMode,
+                horizontalInverted: configuration.horizontalInverted)
             guard epoch == operationEpoch else {
                 try await mouse.release()
                 return
             }
             if !preferences.resumeMappings { preferences.resumeMappings = true }
+            appliedConfiguration = configuration
             enabled = true
             status =
                 preferences.testMode
@@ -255,6 +302,7 @@ final class AppModel: ObservableObject {
         let epoch = operationEpoch
         cancelInput()
         enabled = false
+        appliedConfiguration = nil
         busy = true
         defer {
             busy = false
@@ -277,8 +325,9 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func cancelInput() {
-        performZoom(zoom.cancel())
+    private func cancelInput(testMode: Bool? = nil) {
+        suppressedControls.formUnion(heldControls)
+        performZoom(zoom.cancel(), testMode: testMode)
         wheel.cancel()
         thumb.cancel()
         movementButtons.cancel()
@@ -288,7 +337,15 @@ final class AppModel: ObservableObject {
     }
 
     private func physicalPress(_ control: MouseControl, down: Bool) {
-        guard enabled else { return }
+        if down { heldControls.insert(control) } else { heldControls.remove(control) }
+        if suppressedControls.contains(control) {
+            if !down { suppressedControls.remove(control) }
+            return
+        }
+        guard enabled, !recordingShortcut, preferences.controls.contains(control) else {
+            if down { suppressedControls.insert(control) }
+            return
+        }
         if control.reportsMovement {
             movementPress(control, down: down)
             return
@@ -343,12 +400,14 @@ final class AppModel: ObservableObject {
     }
 
     private func performThumb(_ action: ThumbGestureInterpreter.Action) {
-        let label = WindowNavigationOutput.label(action)
-        lastAction = (preferences.testMode ? "Test: " : "") + "Thumb → \(label)"
+        let shortcut = preferences.thumbShortcut(action)
+        lastAction =
+            (preferences.testMode ? "Test: " : "")
+            + "Thumb \(action.rawValue) → \(shortcut?.label ?? "No action")"
         append(lastAction)
-        guard !preferences.testMode else { return }
-        if !WindowNavigationOutput.send(action) {
-            status = "Could not send \(label). Check Accessibility and macOS Mission Control shortcuts."
+        guard !preferences.testMode, let shortcut else { return }
+        if !KeyboardOutput.send(shortcut) {
+            status = "Thumb shortcut could not be sent. Check Accessibility."
         }
     }
 
@@ -357,26 +416,26 @@ final class AppModel: ObservableObject {
         let shortcut: Shortcut?
         switch action {
         case .back:
-            label = "Click → Back (⌘[)"
-            shortcut = KeyboardOutput.back
+            shortcut = preferences.backClick.resolve(default: .back)
+            label = "Back click → \(shortcut?.label ?? "No action")"
         case .forward:
-            label = "Click → Forward (⌘])"
-            shortcut = KeyboardOutput.forward
+            shortcut = preferences.forwardClick.resolve(default: .forward)
+            label = "Forward click → \(shortcut?.label ?? "No action")"
         case .shortcut:
             label = "Hold → \(preferences.shortcut?.label ?? "shortcut not set")"
             shortcut = preferences.shortcut
         }
         lastAction = (preferences.testMode ? "Test: " : "") + label
         append(lastAction)
-        guard !preferences.testMode else { return }
-        guard let shortcut, KeyboardOutput.send(shortcut)
+        guard !preferences.testMode, let shortcut else { return }
+        guard KeyboardOutput.send(shortcut)
         else {
             status = "Shortcut could not be sent. Check Accessibility."
             return
         }
     }
 
-    private func performZoom(_ actions: [ZoomAction]) {
+    private func performZoom(_ actions: [ZoomAction], testMode: Bool? = nil) {
         for action in actions {
             switch action {
             case .click:
@@ -390,7 +449,7 @@ final class AppModel: ObservableObject {
             case .end, .cancel:
                 append(action == .end ? "Zoom ended" : "Zoom cancelled")
             }
-            if preferences.testMode { continue }
+            if testMode ?? preferences.testMode { continue }
             if !ZoomOutput.send(action, at: zoomAnchor) {
                 status = "Zoom could not be sent. Check Accessibility."
             }

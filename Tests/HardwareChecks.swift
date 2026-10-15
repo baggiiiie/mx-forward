@@ -33,21 +33,22 @@ private enum HardwareChecks {
 
     private static func run() async throws {
         precondition(Bundle.main.bundleIdentifier != "local.baggie.mxforward")
+        try AppSettingsChecks.run()
         try require(
-            WindowNavigationOutput.shortcut(.missionControl, hotkeys: nil)?.keyCode == 126,
+            WindowNavigationOutput.shortcut(.up, hotkeys: nil)?.keyCode == 126,
             "Missing default Mission Control shortcut")
         try require(
-            WindowNavigationOutput.shortcut(.missionControl, hotkeys: ["32": ["enabled": false]]) == nil,
+            WindowNavigationOutput.shortcut(.up, hotkeys: ["32": ["enabled": false]]) == nil,
             "Disabled Mission Control shortcut must be respected")
         let customized: [String: Any] = [
             "32": ["enabled": true, "value": ["type": "standard", "parameters": [0, 20, 1_310_720]]]
         ]
-        let shortcut = WindowNavigationOutput.shortcut(.missionControl, hotkeys: customized)
+        let shortcut = WindowNavigationOutput.shortcut(.up, hotkeys: customized)
         try require(
             shortcut?.keyCode == 20 && shortcut?.modifiers == 1_310_720, "Custom shortcut was ignored")
         print("PASS: window actions respect default, customized, and disabled macOS shortcuts")
         for action: ThumbGestureInterpreter.Action in [
-            .missionControl, .appExpose, .desktopLeft, .desktopRight,
+            .up, .down, .left, .right,
         ] {
             guard let shortcut = WindowNavigationOutput.shortcut(action, hotkeys: nil),
                 let (down, up) = KeyboardOutput.events(for: shortcut)
@@ -60,7 +61,7 @@ private enum HardwareChecks {
             }
             try require(down.type == .keyDown && up.type == .keyUp, "Missing keyboard press or release")
         }
-        guard let (letterDown, _) = KeyboardOutput.events(for: KeyboardOutput.forward) else {
+        guard let (letterDown, _) = KeyboardOutput.events(for: Shortcut.forward) else {
             throw MouseError.message("Could not create browser navigation event")
         }
         try require(letterDown.flags == .maskCommand, "Arrow flags leaked onto browser navigation")
@@ -77,8 +78,19 @@ private enum HardwareChecks {
         }
         print("PASS: macOS decodes precise vertical scroll events in both directions")
         let mouse = BoltMouse()
+        var discoveryLog: [String] = []
+        mouse.onLog = { discoveryLog.append($0) }
+        mouse.onStatus = { discoveryLog.append($0) }
         try mouse.start()
-        try await waitFor { mouse.connection != nil }
+        do {
+            try await waitFor {
+                mouse.rescan()
+                return mouse.connection != nil
+            }
+        } catch {
+            print(discoveryLog.joined(separator: "\n"))
+            throw error
+        }
         do {
             for mode in WheelMode.allCases {
                 try await mouse.claim([], wheelMode: mode)
@@ -87,17 +99,32 @@ private enum HardwareChecks {
                 try require(!mouse.claimed, "Wheel-only release failed")
                 print("PASS: main wheel \(mode.label) is applied, verified, and restored")
             }
+            for inverted in [true, false, true] {
+                try await mouse.claim([], horizontalInverted: inverted)
+                try require(try await mouse.verifyClaim(), "Horizontal direction was not confirmed")
+                try await mouse.release()
+                try require(!mouse.claimed, "Horizontal direction was not restored")
+            }
+            print("PASS: horizontal direction reverses and restores the original native settings")
         } catch {
             try? await mouse.release()
             throw error
         }
         var preferences = Preferences()
         preferences.wheelEnabled = true
+        preferences.horizontalDirection = .reversed
         preferences.wheelMode = .ratchet
         preferences.testMode = true
         preferences.resumeMappings = true
         preferences.save()
-        let model = AppModel()
+        let inputMouse = BoltMouse()
+        let model = AppModel(mouse: inputMouse)
+        var hardwareEvents: [String] = []
+        let logToModel = inputMouse.onLog
+        inputMouse.onLog = { event in
+            hardwareEvents.append(event)
+            logToModel(event)
+        }
         do {
             try await waitFor { model.enabled }
             try require(model.connected && !model.needsRelease, "Startup claims were not confirmed")
@@ -105,7 +132,108 @@ private enum HardwareChecks {
                 try require(model.log.contains { $0.contains("Claimed \(name)") }, "Missing \(name) claim")
             }
             try require(model.log.contains { $0.contains("Claimed main wheel") }, "Missing wheel claim")
-            print("PASS: startup discovers and claims all selected buttons and main wheel")
+            try require(
+                hardwareEvents.contains("Horizontal direction · Reversed"),
+                "Missing horizontal direction setting")
+            print("PASS: startup applies button mappings and both wheel settings")
+
+            func claims(_ name: String) -> Int {
+                hardwareEvents.filter { $0.contains("Claimed \(name)") }.count
+            }
+            let initialClaims = claims("Forward")
+            model.preferences.wheelSpeed = 2
+            model.preferences.wheelAcceleration = 0.5
+            model.preferences.zoomSensitivity = 3
+            model.preferences.forwardClick = ShortcutMapping(source: .custom, shortcut: .back)
+            model.preferences.thumbShortcuts["click"] = ShortcutMapping(source: .none)
+            try await Task.sleep(for: .milliseconds(300))
+            try require(
+                model.enabled && !model.busy && claims("Forward") == initialClaims,
+                "Software settings unnecessarily disconnected the mouse")
+            print("PASS: shortcuts, speeds, and acceleration change live without releasing mouse controls")
+            inputMouse.onPress(.forward, true)
+            let beforeRecording = model.log.count
+            model.setRecordingShortcut(true)
+            inputMouse.onPress(.forward, true)
+            inputMouse.onPress(.forward, false)
+            inputMouse.onPress(.back, true)
+            inputMouse.onPress(.back, false)
+            model.setRecordingShortcut(false)
+            try require(model.log.count == beforeRecording, "Mouse shortcuts fired during recording")
+            inputMouse.onPress(.forward, true)
+            inputMouse.onPress(.forward, false)
+            try require(
+                model.lastAction.contains("Forward click → ⌘["), "Forward ignored its recorded click shortcut"
+            )
+            model.preferences.thumbShortcuts["click"] = ShortcutMapping(
+                source: .custom,
+                shortcut: Shortcut(keyCode: 0, modifiers: CGEventFlags.maskCommand.rawValue, keyLabel: "A"))
+            model.preferences.thumbShortcuts["up"] = ShortcutMapping(source: .none)
+            inputMouse.onPress(.thumb, true)
+            inputMouse.onPress(.thumb, false)
+            try require(model.lastAction.contains("Thumb click → ⌘A"), "Thumb click ignored its override")
+            inputMouse.onPress(.thumb, true)
+            inputMouse.onMovement(0, 0)
+            inputMouse.onMovement(0, -200)
+            inputMouse.onPress(.thumb, false)
+            try require(
+                model.lastAction.contains("Thumb up → No action"), "Thumb up reused the click binding")
+            inputMouse.onPress(.forward, true)
+            let beforeEdit = model.log.count
+            model.preferences.holdMilliseconds = 600
+            inputMouse.onPress(.forward, true)
+            inputMouse.onPress(.forward, false)
+            try require(model.log.count == beforeEdit, "An edited held button fired on release")
+            print(
+                "PASS: recording suppresses mouse shortcuts; edits cancel held releases; thumb click/up stay independent"
+            )
+
+            model.preferences.wheelMode = .freeSpin
+            try await waitFor {
+                model.enabled && !model.busy
+                    && model.log.contains { $0.contains("Claimed main wheel · Free-spin") }
+            }
+            try require(model.preferences.resumeMappings, "Changing hardware settings lost active intent")
+            print("PASS: wheel-mode changes automatically restore and reclaim the mouse")
+
+            let oldBackClaims = claims("Back")
+            let oldForwardClaims = claims("Forward")
+            model.preferences.backEnabled = false
+            try await waitFor { model.enabled && !model.busy && claims("Forward") > oldForwardClaims }
+            try require(claims("Back") == oldBackClaims, "A disabled button was reclaimed")
+            model.preferences.backEnabled = true
+            try await waitFor { model.enabled && !model.busy && claims("Back") > oldBackClaims }
+            print("PASS: feature toggles apply automatically without a manual Pause")
+
+            let beforeDirectionChange = claims("Forward")
+            model.preferences.horizontalDirection = .standard
+            try await waitFor { model.enabled && !model.busy && claims("Forward") > beforeDirectionChange }
+            try require(
+                hardwareEvents.contains("Restored horizontal scrolling"),
+                "Horizontal reversal stayed active after disabling it")
+            let beforeReverse = hardwareEvents.filter { $0 == "Horizontal direction · Reversed" }.count
+            model.preferences.horizontalDirection = .reversed
+            try await waitFor {
+                model.enabled && !model.busy
+                    && hardwareEvents.filter { $0 == "Horizontal direction · Reversed" }.count > beforeReverse
+            }
+            print("PASS: horizontal direction changes live without a manual Pause")
+
+            var empty = model.preferences
+            empty.forwardEnabled = false
+            empty.backEnabled = false
+            empty.topZoomEnabled = false
+            empty.thumbGesturesEnabled = false
+            empty.wheelEnabled = false
+            empty.horizontalDirection = .unchanged
+            model.preferences = empty
+            try await waitFor { !model.enabled && !model.busy }
+            try require(
+                !model.needsRelease && model.preferences.resumeMappings,
+                "Turning off every feature did not restore controls and preserve intent")
+            model.preferences = preferences
+            try await waitFor { model.enabled && !model.busy }
+            print("PASS: disabling every feature restores native input; enabling one resumes automatically")
 
             let notifications = NSWorkspace.shared.notificationCenter
             notifications.post(name: NSWorkspace.willSleepNotification, object: nil)
@@ -124,8 +252,10 @@ private enum HardwareChecks {
             await model.pause()
             try require(
                 !model.enabled && !model.preferences.resumeMappings, "Pause retained the resume setting")
+            model.preferences.wheelMode = .unchanged
+            model.preferences.zoomSensitivity = 4
             try await Task.sleep(for: .seconds(4))
-            try require(!model.enabled, "Explicit Pause resumed automatically")
+            try require(!model.enabled, "Changing settings after an explicit Pause resumed mappings")
             print("PASS: explicit Pause stays paused")
 
             await model.enable()

@@ -49,7 +49,13 @@ final class BoltMouse {
         let desiredShift: [UInt8]?
     }
     private var wheelClaim: WheelClaim?
-    var claimed: Bool { !claims.isEmpty || wheelClaim != nil }
+    private struct HorizontalClaim {
+        let feature: UInt8
+        let original: ThumbWheelReporting
+        let inverted: Bool
+    }
+    private var horizontalClaim: HorizontalClaim?
+    var claimed: Bool { !claims.isEmpty || wheelClaim != nil || horizontalClaim != nil }
     var onStatus: (String) -> Void = { _ in }
     var onPress: (MouseControl, Bool) -> Void = { _, _ in }
     var onMovement: (Int16, Int16) -> Void = { _, _ in }
@@ -225,10 +231,12 @@ final class BoltMouse {
         return response.payload[0]
     }
 
-    func claim(_ controls: Set<MouseControl>, wheelMode: WheelMode? = nil) async throws {
+    func claim(
+        _ controls: Set<MouseControl>, wheelMode: WheelMode? = nil, horizontalInverted: Bool? = nil
+    ) async throws {
         guard let c = connection else { throw MouseError.message("Discover your mouse first.") }
         guard !claimed else { return }
-        guard !controls.isEmpty || wheelMode != nil else {
+        guard !controls.isEmpty || wheelMode != nil || horizontalInverted != nil else {
             throw MouseError.message("Choose a mouse control to enable.")
         }
         let unavailable = controls.subtracting(c.availableControls)
@@ -254,6 +262,7 @@ final class BoltMouse {
                 onLog("Claimed \(control.name)\(control.reportsMovement ? " with raw movement" : "")")
             }
             if let wheelMode { try await claimWheel(wheelMode, c) }
+            if let horizontalInverted { try await claimHorizontal(horizontalInverted, c) }
         } catch {
             // Cleanup must still run when the caller was cancelled.
             try? await Task { try await self.release() }.value
@@ -264,8 +273,11 @@ final class BoltMouse {
     func release() async throws {
         guard claimed, let c = connection else { return }
         var failure: Error?
+        if horizontalClaim != nil {
+            do { try await releaseHorizontal(c) } catch { failure = error }
+        }
         if wheelClaim != nil {
-            do { try await releaseWheel(c) } catch { failure = error }
+            do { try await releaseWheel(c) } catch { failure = failure ?? error }
         }
         for control in claims.keys.sorted() {
             do {
@@ -287,6 +299,13 @@ final class BoltMouse {
     /// Sleep cleanup cannot wait for a reply on the main run loop.
     func releaseImmediately() -> Bool {
         guard let c = connection, let device = devices[c.endpoint] else { return !claimed }
+        if let horizontal = horizontalClaim,
+            writeImmediately(
+                device, c, feature: horizontal.feature, function: 2,
+                payload: horizontal.original.bytes)
+        {
+            horizontalClaim = nil
+        }
         if let wheel = wheelClaim {
             let shiftRestored =
                 wheel.desiredShift == nil
@@ -315,6 +334,10 @@ final class BoltMouse {
             guard state.temporarilyDiverted, state.remap == original.remap,
                 state.rawMovement == control.reportsMovement
             else { return false }
+        }
+        if let horizontal = horizontalClaim {
+            let state = try await readHorizontal(c, feature: horizontal.feature)
+            guard state.inverted == horizontal.inverted else { return false }
         }
         if wheelClaim != nil { return try await verifyWheel(c) }
         return true
@@ -349,6 +372,7 @@ final class BoltMouse {
             connection = nil
             claims.removeAll()
             wheelClaim = nil
+            horizontalClaim = nil
             onDisconnect()
             onStatus("Bolt receiver disconnected")
         }
@@ -509,5 +533,42 @@ extension BoltMouse {
                 device, kIOHIDReportTypeOutput, CFIndex(bytes[0]), $0.baseAddress!, bytes.count)
                 == kIOReturnSuccess
         }
+    }
+}
+
+extension BoltMouse {
+    private func readHorizontal(_ c: Connection, feature: UInt8) async throws -> ThumbWheelReporting {
+        let response = try await request(c.endpoint, c.slot, feature, 1)
+        guard let state = ThumbWheelReporting(response.payload) else {
+            throw MouseError.message("Unexpected thumb-wheel settings response.")
+        }
+        return state
+    }
+
+    private func claimHorizontal(_ inverted: Bool, _ c: Connection) async throws {
+        let index = try await feature(0x2150, c.endpoint, c.slot)
+        let original = try await readHorizontal(c, feature: index)
+        guard connection == c else { throw MouseError.message("Mouse connection changed. Reconnect.") }
+        horizontalClaim = HorizontalClaim(feature: index, original: original, inverted: inverted)
+        let desired = original.parameters(inverted: inverted)
+        _ = try await request(c.endpoint, c.slot, index, 2, desired)
+        let confirmed = try await readHorizontal(c, feature: index)
+        guard confirmed.bytes == desired else {
+            throw MouseError.message("Mouse did not confirm horizontal scroll direction.")
+        }
+        onLog("Horizontal direction · \(inverted ? "Reversed" : "Standard")")
+    }
+
+    private func releaseHorizontal(_ c: Connection) async throws {
+        guard let horizontal = horizontalClaim else { return }
+        let current = try await readHorizontal(c, feature: horizontal.feature)
+        let desired = current.parameters(inverted: horizontal.original.inverted)
+        _ = try await request(c.endpoint, c.slot, horizontal.feature, 2, desired)
+        let confirmed = try await readHorizontal(c, feature: horizontal.feature)
+        guard confirmed.bytes == desired else {
+            throw MouseError.message("Mouse did not confirm restoration of horizontal scrolling.")
+        }
+        horizontalClaim = nil
+        onLog("Restored horizontal scrolling")
     }
 }

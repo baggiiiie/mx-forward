@@ -1,8 +1,8 @@
 import Foundation
 
 public struct ThumbGestureInterpreter {
-    public enum Action: Equatable {
-        case missionControl, appExpose, desktopLeft, desktopRight
+    public enum Action: String, Codable, CaseIterable {
+        case click, up, down, left, right
     }
     public private(set) var isPressed = false
     private var discardFirst = false
@@ -32,14 +32,14 @@ public struct ThumbGestureInterpreter {
         y += Double(dy)
         guard max(abs(x), abs(y)) >= threshold else { return nil }
         performed = true
-        if abs(x) > abs(y) { return x < 0 ? .desktopLeft : .desktopRight }
-        return y < 0 ? .missionControl : .appExpose
+        if abs(x) > abs(y) { return x < 0 ? .left : .right }
+        return y < 0 ? .up : .down
     }
 
     public mutating func up() -> Action? {
         guard isPressed else { return nil }
         defer { self = ThumbGestureInterpreter() }
-        return performed ? nil : .missionControl
+        return performed ? nil : .click
     }
 
     public mutating func cancel() { self = ThumbGestureInterpreter() }

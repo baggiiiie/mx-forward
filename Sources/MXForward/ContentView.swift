@@ -44,7 +44,19 @@ struct ContentView: View {
                             Toggle("Forward", isOn: $model.preferences.forwardEnabled)
                             Toggle("Back", isOn: $model.preferences.backEnabled)
                         }
-                        Text("Click Forward: ⌘]. Click Back: ⌘[. Navigation fires on release.")
+                        ShortcutMappingRow(
+                            title: "Forward click", mapping: $model.preferences.forwardClick,
+                            defaultShortcut: .forward, resetHelp: "Restore Forward (⌘])",
+                            onRecordingChanged: model.setRecordingShortcut
+                        )
+                        .disabled(!model.preferences.forwardEnabled)
+                        ShortcutMappingRow(
+                            title: "Back click", mapping: $model.preferences.backClick,
+                            defaultShortcut: .back, resetHelp: "Restore Back (⌘[)",
+                            onRecordingChanged: model.setRecordingShortcut
+                        )
+                        .disabled(!model.preferences.backEnabled)
+                        Text("Click a shortcut, then press your keys. Side-button clicks fire on release.")
                             .font(.callout).foregroundStyle(.secondary)
                         Toggle("Hold Forward for a shortcut", isOn: $model.preferences.forwardHoldEnabled)
                             .disabled(!model.preferences.forwardEnabled)
@@ -52,8 +64,11 @@ struct ContentView: View {
                             VStack(alignment: .leading, spacing: 12) {
                                 HStack {
                                     Text("Shortcut").frame(width: 80, alignment: .leading)
-                                    ShortcutRecorder(shortcut: $model.preferences.shortcut)
-                                        .frame(height: 32)
+                                    ShortcutRecorder(
+                                        shortcut: $model.preferences.shortcut,
+                                        onRecordingChanged: model.setRecordingShortcut
+                                    )
+                                    .frame(height: 32)
                                     if model.preferences.shortcut != nil {
                                         Button("Clear") { model.preferences.shortcut = nil }
                                     }
@@ -72,11 +87,11 @@ struct ContentView: View {
                             }.disabled(!model.preferences.forwardEnabled)
                         }
                     }.padding(4)
-                }.disabled(model.enabled || model.busy || model.needsRelease)
+                }.disabled(model.busy || model.needsRelease)
                 Toggle("Test mode — show actions without sending them", isOn: $model.preferences.testMode)
-                    .disabled(model.enabled || model.busy || model.needsRelease)
+                    .disabled(model.busy || model.needsRelease)
                 Text(
-                    "The mouse connects automatically. Enable once to resume after launch or reconnect. Pause keeps mappings off."
+                    "Settings apply automatically while enabled. Click a shortcut and press your keys to change it. Pause turns mappings off."
                 )
                 .font(.callout).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -84,15 +99,27 @@ struct ContentView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         Toggle("Window navigation", isOn: $model.preferences.thumbGesturesEnabled)
                         Text(
-                            "Click or move up: Mission Control. Move down: App Exposé. Move left/right: switch desktops."
+                            "Defaults: click/up opens Mission Control, down opens App Exposé, left/right switches desktops."
                         )
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                         Text(
-                            "Hold the thumb button while moving. Each press performs one action using your macOS keyboard shortcuts."
+                            "Click any shortcut below to record your own. Hold the thumb button while moving; each press performs one action."
                         )
                         .font(.caption).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                        ForEach(ThumbGestureInterpreter.Action.allCases, id: \.self) { action in
+                            ShortcutMappingRow(
+                                title: action == .click ? "Click" : "Hold + \(action.rawValue)",
+                                mapping: Binding(
+                                    get: {
+                                        model.preferences.thumbShortcuts[action.rawValue] ?? ShortcutMapping()
+                                    },
+                                    set: { model.preferences.thumbShortcuts[action.rawValue] = $0 }),
+                                defaultShortcut: WindowNavigationOutput.currentShortcut(action),
+                                resetHelp: "Use macOS \(WindowNavigationOutput.label(action)) shortcut",
+                                onRecordingChanged: model.setRecordingShortcut)
+                        }
                         HStack {
                             Text("Gesture sensitivity")
                             Slider(value: $model.preferences.thumbSensitivity, in: 0.25...3, step: 0.05)
@@ -101,7 +128,7 @@ struct ContentView: View {
                                 .monospacedDigit().frame(width: 48, alignment: .trailing)
                         }
                     }.padding(4)
-                }.disabled(model.enabled || model.busy || model.needsRelease)
+                }.disabled(model.busy || model.needsRelease)
                 GroupBox("Top button") {
                     VStack(alignment: .leading, spacing: 10) {
                         Toggle("Enable top button", isOn: $model.preferences.topZoomEnabled)
@@ -114,7 +141,8 @@ struct ContentView: View {
                             HStack {
                                 ShortcutRecorder(
                                     shortcut: $model.preferences.topClickShortcut,
-                                    accessibilityLabel: "Top-button click keyboard shortcut"
+                                    accessibilityLabel: "Top-button click keyboard shortcut",
+                                    onRecordingChanged: model.setRecordingShortcut
                                 )
                                 .frame(height: 32)
                                 if model.preferences.topClickShortcut != nil {
@@ -133,7 +161,7 @@ struct ContentView: View {
                                 .monospacedDigit().frame(width: 48, alignment: .trailing)
                         }
                     }.padding(4)
-                }.disabled(model.enabled || model.busy || model.needsRelease)
+                }.disabled(model.busy || model.needsRelease)
                 GroupBox("Main scroll wheel") {
                     VStack(alignment: .leading, spacing: 10) {
                         Toggle("Control main wheel", isOn: $model.preferences.wheelEnabled)
@@ -146,6 +174,22 @@ struct ContentView: View {
                                     .monospacedDigit().frame(width: 48, alignment: .trailing)
                             }
                             Toggle("Natural scrolling", isOn: $model.preferences.wheelNatural)
+                            HStack {
+                                Text("Acceleration")
+                                Slider(value: $model.preferences.wheelAcceleration, in: 0...2, step: 0.05)
+                                    .accessibilityLabel("Main wheel acceleration strength")
+                                Text(
+                                    model.preferences.wheelAcceleration == 0
+                                        ? "Off"
+                                        : "\(Int((model.preferences.wheelAcceleration * 100).rounded()))%"
+                                )
+                                .monospacedDigit().frame(width: 48, alignment: .trailing)
+                            }
+                            Text(
+                                "Slow scrolling uses your baseline speed. Faster spins scroll farther. Set acceleration to 0% to turn it off."
+                            )
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                             Picker("Wheel mode", selection: $model.preferences.wheelMode) {
                                 ForEach(WheelMode.allCases) { mode in Text(mode.label).tag(mode) }
                             }
@@ -161,7 +205,21 @@ struct ContentView: View {
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     }.padding(4)
-                }.disabled(model.enabled || model.busy || model.needsRelease)
+                }.disabled(model.busy || model.needsRelease)
+                GroupBox("Horizontal scrolling") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Picker("Thumb-wheel direction", selection: $model.preferences.horizontalDirection) {
+                            ForEach(HorizontalDirection.allCases) { direction in
+                                Text(direction.label).tag(direction)
+                            }
+                        }
+                        Text(
+                            "Choose the left/right scroll direction for the thumb wheel. Changes apply automatically while enabled."
+                        )
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }.padding(4)
+                }.disabled(model.busy || model.needsRelease)
                 Button("Open zoom verification") { model.showZoomTest() }
                 GroupBox("Try the timing") {
                     VStack(alignment: .leading, spacing: 8) {
@@ -212,87 +270,13 @@ struct ContentView: View {
                     }.frame(height: 130)
                 }
                 Text(
-                    "Side buttons use ⌘[ and ⌘]. Top-button zoom uses native pinch events in apps that support them."
+                    "Top-button zoom uses native pinch events in apps that support them."
                 )
                 .font(.caption).foregroundStyle(.secondary)
             }
             .padding(24)
         }
         .frame(width: 560, height: min(820, (NSScreen.main?.visibleFrame.height ?? 900) - 80))
-    }
-}
-
-struct ShortcutRecorder: NSViewRepresentable {
-    @Binding var shortcut: Shortcut?
-    var accessibilityLabel = "Hold keyboard shortcut"
-    func makeNSView(context: Context) -> RecorderButton {
-        let view = RecorderButton()
-        view.bezelStyle = .rounded
-        view.onRecord = { shortcut = $0 }
-        return view
-    }
-    func updateNSView(_ view: RecorderButton, context: Context) {
-        view.isEnabled = context.environment.isEnabled
-        view.shortcutTitle = shortcut?.label ?? "Record shortcut…"
-        view.updateTitle()
-        view.setAccessibilityLabel(accessibilityLabel)
-    }
-}
-
-final class RecorderButton: NSButton {
-    private var recording = false
-    var shortcutTitle = "Record shortcut…"
-    var onRecord: (Shortcut) -> Void = { _ in }
-    override var acceptsFirstResponder: Bool { true }
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        target = self
-        action = #selector(beginRecording)
-    }
-    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-    @objc private func beginRecording() {
-        window?.makeFirstResponder(self)
-        recording = true
-        updateTitle()
-    }
-    func updateTitle() {
-        if !isEnabled { recording = false }
-        title = recording ? "Press shortcut… (Esc cancels)" : shortcutTitle
-    }
-    override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        guard recording, isEnabled else { return super.performKeyEquivalent(with: event) }
-        capture(event)
-        return true
-    }
-    override func keyDown(with event: NSEvent) {
-        guard recording, isEnabled else {
-            super.keyDown(with: event)
-            return
-        }
-        capture(event)
-    }
-    private func capture(_ event: NSEvent) {
-        if event.keyCode == 53
-            && event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
-        {
-            recording = false
-            updateTitle()
-            return
-        }
-        guard !event.isARepeat else { return }
-        recording = false
-        onRecord(Shortcut.recorded(from: event))
-    }
-    override func resignFirstResponder() -> Bool {
-        recording = false
-        updateTitle()
-        return super.resignFirstResponder()
-    }
-    override func viewDidMoveToWindow() {
-        if window == nil {
-            recording = false
-            updateTitle()
-        }
     }
 }
 
@@ -353,7 +337,7 @@ final class TimingPadView: NSView {
     private func show(_ action: PressInterpreter.Action) {
         onResult(
             action == .forward
-                ? "Click detected → Forward (preview only)"
+                ? "Click detected (preview only)"
                 : "Hold detected → shortcut once; no Forward (preview only)")
     }
     override func viewDidMoveToWindow() {
