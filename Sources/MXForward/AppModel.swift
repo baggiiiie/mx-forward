@@ -33,7 +33,8 @@ final class AppModel: ObservableObject {
     /// Gestures for buttons that are currently held.
     private var gestures: [MouseControl: ButtonGesture] = [:]
     private var holdTasks: [MouseControl: Task<Void, Never>] = [:]
-    private var actionAnchor = CGPoint.zero
+    private var actionAnchors: [MouseControl: CGPoint] = [:]
+    private var dragPointer: PointerOutput?
     private var zoomTestWindow: ZoomTestWindow?
     private var appliedConfiguration: MouseConfiguration?
     private var settingsTask: Task<Void, Never>?
@@ -398,6 +399,8 @@ final class AppModel: ObservableObject {
             perform(gestures[control]?.cancel() ?? [], from: control, testMode: testMode)
         }
         gestures.removeAll()
+        actionAnchors.removeAll()
+        dragPointer = nil
         for task in holdTasks.values { task.cancel() }
         holdTasks.removeAll()
         wheel.cancel()
@@ -427,6 +430,8 @@ final class AppModel: ObservableObject {
             let events = gestures[control]?.up(at: now) ?? []
             gestures[control] = nil
             perform(events, from: control)
+            actionAnchors[control] = nil
+            if preferences.buttons[control].dragScroll { dragPointer = nil }
             return
         }
         // Movement reports don't say which button is held, so two dragging buttons can't share them.
@@ -435,6 +440,8 @@ final class AppModel: ObservableObject {
             let events = gestures[other]?.cancel() ?? []
             gestures[other] = nil
             perform(events, from: other)
+            actionAnchors[other] = nil
+            dragPointer = nil
             suppressedControls.formUnion([control, other])
             append("Cancelled: \(other.name) and \(control.name) were held together")
             return
@@ -443,11 +450,14 @@ final class AppModel: ObservableObject {
         let options = ButtonGesture.Options(
             holdDelay: mapping.hold.isNone ? nil : mapping.holdMilliseconds / 1000,
             dragDistance: 120 / mapping.dragSensitivity, verticalZoom: mapping.verticalZoom,
-            zoomSpeed: mapping.zoomSpeed, discardFirstReport: mouse.connection?.discardFirstMovement ?? false)
+            zoomSpeed: mapping.zoomSpeed, discardFirstReport: mouse.connection?.discardFirstMovement ?? false,
+            dragScroll: mapping.dragScroll, scrollSpeed: mapping.dragSensitivity)
         var gesture = ButtonGesture()
         gesture.down(at: now, options: options)
         gestures[control] = gesture
-        actionAnchor = CGEvent(source: nil)?.location ?? .zero
+        let anchor = CGEvent(source: nil)?.location ?? .zero
+        actionAnchors[control] = anchor
+        if mapping.dragScroll { dragPointer = PointerOutput(at: anchor) }
         lastAction = "\(control.name) pressed…"
         if let delay = options.holdDelay {
             holdTasks[control] = Task { [weak self] in
@@ -466,6 +476,16 @@ final class AppModel: ObservableObject {
             switch event {
             case .action(let slot): perform(slot, of: control, testMode: testMode)
             case .zoom(let zoom): perform(zoom, from: control, testMode: testMode)
+            case .pointer(let dx, let dy):
+                // Keep normal cursor movement in test mode too.
+                if dragPointer?.send(dx: dx, dy: dy) == false {
+                    status = "Pointer movement could not be sent. Check Accessibility."
+                }
+            case .scroll(let scroll):
+                lastAction = (testMode ? "Test: " : "") + "\(control.name) drag → Scroll & navigate"
+                if !testMode && !WheelOutput.sendDrag(scroll, at: actionAnchors[control] ?? .zero) {
+                    status = "Scrolling could not be sent. Check Accessibility."
+                }
             }
         }
     }
@@ -475,7 +495,7 @@ final class AppModel: ObservableObject {
         lastAction = (testMode ? "Test: " : "") + "\(control.name) \(slot.rawValue) → \(action.label)"
         append(lastAction)
         guard !testMode, !action.isNone else { return }
-        if !ActionOutput.send(action, at: actionAnchor) {
+        if !ActionOutput.send(action, at: actionAnchors[control] ?? .zero) {
             status = "\(control.name) action could not be sent. Check Accessibility."
         }
     }
@@ -490,7 +510,7 @@ final class AppModel: ObservableObject {
         case .end, .cancel: append(zoom == .end ? "Zoom ended" : "Zoom cancelled")
         case .click: break
         }
-        if !testMode && !ZoomOutput.send(zoom, at: actionAnchor) {
+        if !testMode && !ZoomOutput.send(zoom, at: actionAnchors[control] ?? .zero) {
             status = "Zoom could not be sent. Check Accessibility."
         }
     }

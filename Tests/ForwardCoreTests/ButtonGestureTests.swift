@@ -127,6 +127,69 @@ final class ButtonGestureTests {
         expectEqual(amount(gesture.move(dx: 0, dy: .max)), -0.25)
     }
 
+    func testDragScrollTracksBothAxesAndEnds() {
+        var gesture = pressed(.init(holdDelay: 0.4, dragScroll: true))
+        expectEqual(gesture.move(dx: 4, dy: -3), [.pointer(dx: 4, dy: -3)])
+        expectEqual(
+            gesture.move(dx: 16, dy: -17),
+            [.pointer(dx: 16, dy: -17), .scroll(.begin), .scroll(.move(x: 20, y: -20))])
+        expectNil(gesture.advance(to: 1))
+        expectEqual(gesture.move(dx: -5, dy: 10), [.pointer(dx: -5, dy: 10), .scroll(.move(x: -5, y: 10))])
+        expectEqual(gesture.up(at: 1), [.scroll(.end)])
+        expectEqual(gesture.move(dx: 100, dy: 100), [])
+    }
+
+    func testDragScrollJitterStaleReportsAndCancel() {
+        var gesture = pressed(.init(discardFirstReport: true, dragScroll: true))
+        expectEqual(gesture.move(dx: .max, dy: .min), [])
+        expectEqual(gesture.move(dx: 1, dy: 2), [.pointer(dx: 1, dy: 2)])
+        expectEqual(gesture.up(at: 0.1), [.action(.click)])
+        gesture = pressed(.init(dragScroll: true))
+        _ = gesture.move(dx: 0, dy: 30)
+        expectEqual(gesture.cancel(), [.scroll(.cancel)])
+        expectEqual(gesture.up(at: 1), [])
+    }
+
+    func testDragScrollSpeedRetainsFractionalPixels() {
+        var gesture = pressed(.init(dragScroll: true, scrollSpeed: 0.25))
+        expectEqual(
+            gesture.move(dx: 20, dy: 0),
+            [.pointer(dx: 20, dy: 0), .scroll(.begin), .scroll(.move(x: 5, y: 0))])
+        for _ in 0..<3 { expectEqual(gesture.move(dx: 1, dy: 0), [.pointer(dx: 1, dy: 0)]) }
+        expectEqual(gesture.move(dx: 1, dy: 0), [.pointer(dx: 1, dy: 0), .scroll(.move(x: 1, y: 0))])
+        expectEqual(
+            gesture.move(dx: .min, dy: .max),
+            [.pointer(dx: .min, dy: .max), .scroll(.move(x: -8192, y: 8191))])
+    }
+
+    func testDragScrollSpeedBoundsAndRestart() {
+        for (speed, pixels) in [(Double.nan, Int32(20)), (.infinity, 20), (-1, 5), (100, 60)] {
+            var options = ButtonGesture.Options(dragScroll: true)
+            options.scrollSpeed = speed
+            var gesture = pressed(options)
+            expectEqual(
+                gesture.move(dx: 20, dy: 0),
+                [
+                    .pointer(dx: 20, dy: 0), .scroll(.begin), .scroll(.move(x: pixels, y: 0)),
+                ])
+        }
+        var gesture = pressed(.init(dragScroll: true, scrollSpeed: 0.25))
+        _ = gesture.move(dx: 21, dy: 0)
+        expectEqual(gesture.cancel(), [.scroll(.cancel)])
+        gesture.down(at: 1, options: .init(dragScroll: true, scrollSpeed: 0.25))
+        _ = gesture.move(dx: 20, dy: 0)
+        expectEqual(gesture.move(dx: 3, dy: 0), [.pointer(dx: 3, dy: 0)])
+    }
+
+    func testDragScrollPointerContinuesAfterHold() {
+        var gesture = pressed(.init(holdDelay: 0.4, dragScroll: true))
+        expectEqual(gesture.advance(to: 1), .action(.hold))
+        expectEqual(gesture.move(dx: 100, dy: 50), [.pointer(dx: 100, dy: 50)])
+        expectEqual(gesture.move(dx: 0, dy: 0), [])
+        expectEqual(gesture.up(at: 1), [])
+        expectEqual(gesture.move(dx: 100, dy: 50), [])
+    }
+
     func testCancelEndsAZoomWithoutAClick() {
         var gesture = pressed(.init(verticalZoom: true))
         _ = gesture.move(dx: 0, dy: -100)

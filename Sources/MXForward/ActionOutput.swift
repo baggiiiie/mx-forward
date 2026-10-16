@@ -10,7 +10,7 @@ enum ActionOutput {
     /// Returns false when macOS refused the event.
     static func send(_ action: ButtonAction, at point: CGPoint) -> Bool {
         switch action.kind {
-        case .none, .zoom: return true
+        case .none, .zoom, .scroll: return true
         case .smartZoom: return ZoomOutput.send(.click, at: point)
         case .middleClick: return middleClick()
         case .shortcut, .missionControl, .appExpose, .desktopLeft, .desktopRight:

@@ -52,7 +52,8 @@ struct MouseConfigurator: View {
             guard let control = button.control else { continue }
             let mapping = p.buttons[control]
             let others = ButtonSlot.allCases.filter { $0 != .click && !mapping[$0].isNone }
-            let more = mapping.verticalZoom ? others.count - 1 : others.count
+            var more = others.count
+            if mapping.dragScroll { more -= 3 } else if mapping.verticalZoom { more -= 1 }
             summaries[button] = mapping.click.label + (more > 0 ? " +\(more)" : "")
         }
         return summaries
@@ -191,7 +192,9 @@ private struct ClickableButtonForm: View {
     private var mapping: Binding<ButtonMapping> { inspector.$preferences.buttons[control] }
     private var value: ButtonMapping { mapping.wrappedValue }
     private var dragsByDistance: Bool {
-        ButtonSlot.directions.contains { !value[$0].isNone && value[$0].kind != .zoom }
+        ButtonSlot.directions.contains {
+            !value[$0].isNone && value[$0].kind != .zoom && value[$0].kind != .scroll
+        }
     }
 
     var body: some View {
@@ -220,7 +223,7 @@ private struct ClickableButtonForm: View {
                 Text("Hold and drag")
             } footer: {
                 Text(
-                    "Hold the button and move the mouse. While any drag is set, the pointer stays still as you hold the button."
+                    "Hold the button and move the mouse. Scroll & navigate links all four directions and moves both the cursor and content. Other drag actions keep the pointer still."
                 ).inspectorFootnote()
             }
             timing
@@ -269,7 +272,7 @@ private struct ClickableButtonForm: View {
     }
 
     @ViewBuilder private var timing: some View {
-        if !value.hold.isNone || dragsByDistance || value.verticalZoom {
+        if !value.hold.isNone || dragsByDistance || value.verticalZoom || value.dragScroll {
             Section {
                 if !value.hold.isNone {
                     ValueSlider(
@@ -287,6 +290,11 @@ private struct ClickableButtonForm: View {
                         title: "Drag sensitivity", value: mapping.dragSensitivity, range: 0.25...3,
                         step: 0.05,
                         accessibility: "Drag sensitivity", format: ButtonInspector.percent)
+                }
+                if value.dragScroll {
+                    ValueSlider(
+                        title: "Scroll speed", value: mapping.dragSensitivity, range: 0.25...3,
+                        step: 0.05, accessibility: "Drag scroll speed", format: ButtonInspector.percent)
                 }
                 if value.verticalZoom {
                     ValueSlider(

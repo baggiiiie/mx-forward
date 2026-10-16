@@ -5,10 +5,11 @@ A small native macOS app for the MX Master 3S with a **Logi Bolt USB receiver**.
 - Every clickable button (Forward, Back, Gesture, Top, and pressing the wheel) has the same three kinds of action: **click**, **hold**, and **hold and drag** up, down, left, or right. Each slot can send a recorded shortcut, Mission Control, App Exposé, a desktop switch, Smart Zoom, a middle click, or nothing. Up and down can also zoom continuously.
 - Defaults: Forward clicks **⌘]**, Back clicks **⌘[**. The gesture button opens Mission Control on click and drag up, App Exposé on drag down, and switches desktops on drag left/right. The top button Smart Zooms on click and pinch-zooms while dragged up or down. The wheel button starts off; turning it on replaces the native middle click with its actions.
 - A hold fires once after the button's hold delay (150–1500 ms, initially 400 ms), and the click then doesn't fire. With no hold action, a long press is a click. Dragging before the hold delay cancels the hold.
+- **Scroll & navigate**: select this in any drag-direction menu to link all four directions. Hold the button and move the mouse to scroll in two dimensions, with content following your hand like a trackpad. The cursor moves too (replayed from raw mouse movement; native pointer acceleration is not reproduced). Scroll speed is adjustable (25–300%). Uses native phased pixel-scroll events; navigation gestures depend on the receiving app. No momentum or multi-finger desktop gestures.
 - Drag sensitivity (25–300%) and zoom speed (25–600%, initially 200%) are set per button.
 - Main-wheel control: scroll speed (25–600%), natural or standard direction, adjustable acceleration, and ratchet/free-spin modes. Keep current mode preserves existing SmartShift behavior. Initially off.
 - Horizontal thumb-wheel direction: Keep current, Standard, or Reversed. Applies independently of the main wheel and restores the previous direction on Pause or Quit.
-- Test mode shows actions without sending them. Pause restores the selected buttons.
+- Test mode shows actions without sending them; Scroll & navigate still moves the cursor. Pause restores the selected buttons.
 - Settings stay editable while mappings are active. Shortcuts and speeds apply immediately; changing selected controls or wheel mode briefly reconnects automatically.
 - Automatic discovery on launch, wake, and reconnect. After you Enable once, mappings resume automatically; an explicit Pause keeps them off.
 
@@ -70,7 +71,7 @@ Settings are mirrored to `~/.config/mx-forward/config.json`. Every button has th
 ```
 
 - Buttons are `forward`, `back`, `gesture`, `top`, and `wheelButton`. Each takes `enabled`, the action slots `click`, `hold`, `up`, `down`, `left`, `right`, and `holdDelayMs`, `dragSensitivityPercent`, `zoomSpeedPercent`.
-- Actions are a shortcut such as `"cmd+shift+]"` or `"⌘⇧]"`, `"none"`, `"missionControl"`, `"appExpose"`, `"desktopLeft"`, `"desktopRight"`, `"smartZoom"`, `"middleClick"`, or `"zoom"` (up and down only, and both together). `"default"` restores that slot's built-in action.
+- Actions are a shortcut such as `"cmd+shift+]"` or `"⌘⇧]"`, `"none"`, `"missionControl"`, `"appExpose"`, `"desktopLeft"`, `"desktopRight"`, `"smartZoom"`, `"middleClick"`, `"zoom"` (up and down only, and both together), or `"scroll"` (set all four directions together; `dragSensitivityPercent` controls scroll speed). `"default"` restores that slot's built-in action.
 - Modifiers: `cmd`, `opt`, `ctrl`, `shift`, `fn`. Keys: letters, digits, punctuation, `return`, `tab`, `space`, `delete`, `escape`, arrow names, `home`, `end`, `pageup`, `pagedown`, `f1`–`f20`. Key names refer to US-layout key positions; shortcuts recorded on other layouts are written as `{"keyCode": 30, "modifiers": ["cmd"], "label": "+"}`.
 - `wheel.mode`: `unchanged`, `ratchet`, `freeSpin`. `thumbWheel.direction`: `unchanged`, `standard`, `reversed`. Percentages use 100 for 100% and are clamped to the app's slider ranges.
 - Any key can be omitted to keep its current value, so a file can contain just the settings you care about.
@@ -78,7 +79,7 @@ Settings are mirrored to `~/.config/mx-forward/config.json`. Every button has th
 ## Behavior and recovery
 
 - Mission Control, App Exposé, and desktop actions follow your macOS keyboard shortcuts for them, including disabled ones. Record a shortcut instead if you want a fixed key.
-- A drag fires one action when movement crosses the drag distance; release before the next one. While a button has any drag action, macOS doesn't move the pointer while that button is held. Buttons without drag actions leave the pointer alone. Holding two buttons with drag actions at once cancels both until they're released.
+- A drag fires one action when movement crosses the drag distance; release before the next one. While a button has any drag action, native pointer movement is diverted while that button is held. Scroll & navigate replays cursor movement and keeps scrolling the content under the initial press; other drag actions keep the pointer still. Buttons without drag actions leave the pointer alone. Holding two buttons with drag actions at once cancels both until they're released.
 - Shortcuts store a keycode and modifiers and target the active app when they fire. Click a shortcut field and press your keys to replace it. Recording temporarily suppresses mouse shortcut and gesture actions; Escape, leaving the window, or disabling the recorder cancels it. System shortcuts are captured before macOS handles them when Accessibility is granted.
 - Editing settings cancels any unfinished mouse gesture or hold, including its release action. Shortcut and speed changes do not release mouse ownership. Selected controls, wheel mode, and horizontal direction reconnect automatically, retaining the enabled state. Editing while explicitly paused leaves mappings paused.
 - Closing the window keeps the app in the menu bar, where you can Pause or Quit.
@@ -92,7 +93,7 @@ Settings are mirrored to `~/.config/mx-forward/config.json`. Every button has th
 
 ## Validation
 
-The 48 core checks cover click, hold, and drag in all four directions, holds cancelled by drags, continuous zoom, cancellation, jitter, the stale first-report filter, signed movement parsing, button reporting, wheel packet decoding, speed/direction, fractional-pixel accumulation, acceleration strength, packet-rate independence, slow-scroll precision, reversals, idle reset, numeric bounds, and horizontal-direction reporting flags. macOS also decodes the generated events as native magnify / smart-magnify events with the expected phases.
+The 53 core checks cover two-axis drag scrolling, scroll lifecycle and fractional pixels, click, hold, and drag in all four directions, holds cancelled by drags, continuous zoom, cancellation, jitter, the stale first-report filter, signed movement parsing, button reporting, wheel packet decoding, speed/direction, fractional-pixel accumulation, acceleration strength, packet-rate independence, slow-scroll precision, reversals, idle reset, numeric bounds, and horizontal-direction reporting flags. macOS also decodes the generated events as native magnify / smart-magnify events with the expected phases.
 
 Run the optional hardware checks with MX Forward quit, Logitech's device agent stopped, and an awake MX Master 3S connected through Bolt:
 

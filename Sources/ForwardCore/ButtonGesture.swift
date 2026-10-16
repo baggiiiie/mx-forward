@@ -13,8 +13,14 @@ public enum ZoomAction: Equatable {
     case cancel
 }
 
-/// Turns one button's press, movement, and release into a click, a hold, a drag direction,
-/// or a continuous vertical zoom. Each press performs at most one of these.
+public enum DragScrollAction: Equatable {
+    case begin
+    case move(x: Int32, y: Int32)
+    case end
+    case cancel
+}
+
+/// Recognizes clicks, holds, directional drags, zooming, and drag scrolling.
 public struct ButtonGesture {
     public struct Options: Equatable {
         /// Nil turns holds into clicks.
@@ -25,26 +31,33 @@ public struct ButtonGesture {
         public var verticalZoom: Bool
         public var zoomSpeed: Double
         public var discardFirstReport: Bool
+        public var dragScroll: Bool
+        public var scrollSpeed: Double
 
         public init(
             holdDelay: TimeInterval? = nil, dragDistance: Double = 120, verticalZoom: Bool = false,
-            zoomSpeed: Double = 1, discardFirstReport: Bool = false
+            zoomSpeed: Double = 1, discardFirstReport: Bool = false,
+            dragScroll: Bool = false, scrollSpeed: Double = 1
         ) {
             self.holdDelay = holdDelay
             self.dragDistance = dragDistance
             self.verticalZoom = verticalZoom
             self.zoomSpeed = zoomSpeed
             self.discardFirstReport = discardFirstReport
+            self.dragScroll = dragScroll
+            self.scrollSpeed = scrollSpeed
         }
     }
 
     public enum Event: Equatable {
         case action(ButtonSlot)
         case zoom(ZoomAction)
+        case scroll(DragScrollAction)
+        case pointer(dx: Int16, dy: Int16)
     }
 
-    private enum State { case idle, pending, zooming, done }
-    private static let zoomThreshold = 20.0
+    private enum State { case idle, pending, zooming, scrolling, done }
+    private static let continuousDragThreshold = 20.0
 
     private var state = State.idle
     private var options = Options()
@@ -52,6 +65,8 @@ public struct ButtonGesture {
     private var discardFirst = false
     private var x = 0.0
     private var y = 0.0
+    private var scrollX = 0.0
+    private var scrollY = 0.0
 
     public init() {}
 
@@ -63,20 +78,33 @@ public struct ButtonGesture {
         self = ButtonGesture()
         state = .pending
         self.options = options
+        self.options.scrollSpeed = options.scrollSpeed.isFinite ? max(0.25, min(3, options.scrollSpeed)) : 1
         deadline = options.holdDelay.map { time + $0 }
         discardFirst = options.discardFirstReport
     }
 
     public mutating func move(dx: Int16, dy: Int16) -> [Event] {
-        guard state == .pending || state == .zooming else { return [] }
+        guard state != .idle else { return [] }
         if discardFirst {
             discardFirst = false
             return []
         }
+        let pointer: [Event] = options.dragScroll && (dx != 0 || dy != 0) ? [.pointer(dx: dx, dy: dy)] : []
+        return pointer + movement(dx: dx, dy: dy)
+    }
+
+    private mutating func movement(dx: Int16, dy: Int16) -> [Event] {
+        guard state == .pending || state == .zooming || state == .scrolling else { return [] }
+        if state == .scrolling { return scroll(Double(dx), Double(dy)) }
         if state == .zooming { return magnify(Double(dy)) }
         x += Double(dx)
         y += Double(dy)
-        if options.verticalZoom && abs(y) >= Self.zoomThreshold && abs(y) >= abs(x) {
+        if options.dragScroll {
+            guard max(abs(x), abs(y)) >= Self.continuousDragThreshold else { return [] }
+            state = .scrolling
+            return [.scroll(.begin)] + scroll(x, y)
+        }
+        if options.verticalZoom && abs(y) >= Self.continuousDragThreshold && abs(y) >= abs(x) {
             state = .zooming
             return [.zoom(.begin)] + magnify(y)
         }
@@ -97,6 +125,7 @@ public struct ButtonGesture {
         switch state {
         case .idle, .done: return []
         case .zooming: return [.zoom(.end)]
+        case .scrolling: return [.scroll(.end)]
         case .pending:
             // A late hold timer must not turn a long press into a click.
             if let deadline, time >= deadline { return [.action(.hold)] }
@@ -106,7 +135,19 @@ public struct ButtonGesture {
 
     public mutating func cancel() -> [Event] {
         defer { self = ButtonGesture() }
+        if state == .scrolling { return [.scroll(.cancel)] }
         return state == .zooming ? [.zoom(.cancel)] : []
+    }
+
+    private mutating func scroll(_ dx: Double, _ dy: Double) -> [Event] {
+        // Content follows the hand, like natural trackpad scrolling.
+        scrollX += dx * options.scrollSpeed
+        scrollY += dy * options.scrollSpeed
+        let px = Int32(scrollX.rounded(.towardZero))
+        let py = Int32(scrollY.rounded(.towardZero))
+        scrollX -= Double(px)
+        scrollY -= Double(py)
+        return px == 0 && py == 0 ? [] : [.scroll(.move(x: px, y: py))]
     }
 
     private func magnify(_ vertical: Double) -> [Event] {

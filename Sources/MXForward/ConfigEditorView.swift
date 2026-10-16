@@ -151,6 +151,7 @@ private struct ConfigReference: View {
                     "desktopLeft"  "desktopRight"
                     "smartZoom"  "middleClick"
                     "zoom"  up and down only
+                    "scroll"  all four drag directions together (trackpad-style scrolling)
                     """)
                 entry("Modifiers", "cmd  opt  ctrl  shift  fn\nSymbols also work: \"⌘⇧T\"")
                 entry(

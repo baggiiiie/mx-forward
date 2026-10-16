@@ -329,9 +329,17 @@ enum ConfigJSON {
                 }
                 guard ButtonAction.Kind.choices(for: slot).contains(action.kind) else {
                     throw ConfigError(
-                        message: "buttons.\(name).\(slot.rawValue): \"zoom\" only works for up and down.")
+                        message:
+                            "buttons.\(name).\(slot.rawValue): \"\(action.kind.rawValue)\" is not available for this slot."
+                    )
                 }
                 mapping[slot] = action
+            }
+            if mapping.dragScroll && !ButtonSlot.directions.allSatisfy({ mapping[$0].kind == .scroll }) {
+                throw ConfigError(
+                    message:
+                        "buttons.\(name): scroll uses all four directions, so set up, down, left, and right to \"scroll\"."
+                )
             }
             guard (mapping.up.kind == .zoom) == (mapping.down.kind == .zoom) else {
                 throw ConfigError(

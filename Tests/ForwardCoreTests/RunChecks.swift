@@ -53,6 +53,11 @@ enum RunChecks {
         gesture.testHorizontalDragStillWorksWithVerticalZoom()
         gesture.testZoomSpeedAndLargePacketLimit()
         gesture.testCancelEndsAZoomWithoutAClick()
+        gesture.testDragScrollTracksBothAxesAndEnds()
+        gesture.testDragScrollJitterStaleReportsAndCancel()
+        gesture.testDragScrollSpeedRetainsFractionalPixels()
+        gesture.testDragScrollPointerContinuesAfterHold()
+        gesture.testDragScrollSpeedBoundsAndRestart()
         let zoom = ZoomTests()
         zoom.testMacOSDecodesNativePinchPhases()
         zoom.testMacOSDecodesSmartZoom()
@@ -80,7 +85,7 @@ enum RunChecks {
             exit(1)
         }
         print(
-            "PASS: 48 scenarios (click, hold, and drag gestures, zoom, wheel, HID++ reporting, native macOS events)"
+            "PASS: 53 scenarios (click, hold, and drag gestures, zoom, wheel, HID++ reporting, native macOS events)"
         )
     }
 }

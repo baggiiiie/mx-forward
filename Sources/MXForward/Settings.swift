@@ -42,8 +42,7 @@ struct Shortcut: Codable, Equatable {
 struct ButtonAction: Codable, Equatable {
     enum Kind: String, Codable, CaseIterable, Identifiable {
         case none, shortcut, missionControl, appExpose, desktopLeft, desktopRight, smartZoom, middleClick
-        /// Continuous zoom; only for dragging up or down.
-        case zoom
+        case zoom, scroll
         var id: Self { self }
         var label: String {
             switch self {
@@ -56,10 +55,15 @@ struct ButtonAction: Codable, Equatable {
             case .smartZoom: return "Smart Zoom"
             case .middleClick: return "Middle click"
             case .zoom: return "Zoom"
+            case .scroll: return "Scroll & navigate"
             }
         }
         static func choices(for slot: ButtonSlot) -> [Kind] {
-            slot == .up || slot == .down ? allCases : allCases.filter { $0 != .zoom }
+            switch slot {
+            case .click, .hold: return allCases.filter { $0 != .zoom && $0 != .scroll }
+            case .left, .right: return allCases.filter { $0 != .zoom }
+            case .up, .down: return allCases
+            }
         }
     }
 
@@ -115,9 +119,18 @@ struct ButtonMapping: Codable, Equatable {
         }
     }
 
-    /// Zoom follows both vertical directions, so up and down switch to and from it together.
+    /// Zoom links up and down; scrolling links all four directions.
     mutating func set(_ action: ButtonAction, for slot: ButtonSlot) {
         let wasZoom = verticalZoom
+        if ButtonSlot.directions.contains(slot) {
+            if action.kind == .scroll {
+                for direction in ButtonSlot.directions { self[direction] = action }
+                return
+            }
+            if dragScroll {
+                for direction in ButtonSlot.directions { self[direction] = ButtonAction(.none) }
+            }
+        }
         self[slot] = action
         guard slot == .up || slot == .down else { return }
         let other: ButtonSlot = slot == .up ? .down : .up
@@ -128,13 +141,18 @@ struct ButtonMapping: Codable, Equatable {
         }
     }
 
+    var dragScroll: Bool { ButtonSlot.directions.contains { self[$0].kind == .scroll } }
     var verticalZoom: Bool { up.kind == .zoom || down.kind == .zoom }
     var reportsMovement: Bool { ButtonSlot.directions.contains { !self[$0].isNone } }
 
     func normalized() -> ButtonMapping {
         var value = self
-        for slot in [ButtonSlot.click, .hold, .left, .right] where value[slot].kind == .zoom {
+        for slot in ButtonSlot.allCases where !ButtonAction.Kind.choices(for: slot).contains(value[slot].kind)
+        {
             value[slot] = ButtonAction(.none)
+        }
+        if value.dragScroll {
+            for slot in ButtonSlot.directions { value[slot] = ButtonAction(.scroll) }
         }
         if value.verticalZoom {
             value.up = ButtonAction(.zoom)

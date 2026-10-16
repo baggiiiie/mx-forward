@@ -53,6 +53,7 @@ enum AppSettingsChecks {
             mapping.normalized().left.isNone && mapping.normalized().holdMilliseconds == 150,
             "Normalizing must drop sideways zoom and clamp timing")
         print("PASS: every button saves click, hold, and drag actions; zoom stays on up and down together")
+        try runDragScrollChecks()
         preferences.wheelAcceleration = 0
         preferences.save()
         try require(Preferences.load().wheelAcceleration == 0, "Disabled acceleration did not persist")
@@ -109,6 +110,89 @@ enum AppSettingsChecks {
         print(
             "PASS: click-to-record captures keys, ignores repeats, and cancels on Escape, disable, or focus loss"
         )
+    }
+
+    private static func runDragScrollChecks() throws {
+        var mapping = ButtonMapping()
+        mapping.set(ButtonAction(.scroll), for: .left)
+        try require(
+            mapping.reportsMovement && ButtonSlot.directions.allSatisfy { mapping[$0].kind == .scroll },
+            "Scroll must link all four directions and request raw movement")
+        var scrolling = Preferences()
+        scrolling.buttons.forward = mapping
+        let scrollJSON = ConfigJSON.encode(scrolling)
+        try require(
+            try ConfigJSON.apply(scrollJSON, to: Preferences()) == scrolling.normalized(),
+            "Drag scroll did not round-trip through JSON")
+        mapping.set(ButtonAction(.zoom), for: .up)
+        try require(
+            mapping.verticalZoom && mapping.left.isNone && mapping.right.isNone,
+            "Leaving scroll must clear its linked directions")
+        for (action, phase) in [
+            (DragScrollAction.begin, NSEvent.Phase.began), (.move(x: 12, y: -34), .changed),
+            (.end, .ended), (.cancel, .cancelled),
+        ] {
+            guard let event = WheelOutput.dragEvent(action, at: CGPoint(x: 50, y: 60)),
+                let decoded = NSEvent(cgEvent: event)
+            else {
+                throw MouseError.message("Could not decode drag scroll event")
+            }
+            try require(
+                decoded.phase == phase && event.location == CGPoint(x: 50, y: 60),
+                "Incorrect scroll phase")
+            try require(decoded.hasPreciseScrollingDeltas, "Drag scroll must use pixel deltas")
+            if case .move = action {
+                try require(
+                    decoded.scrollingDeltaX == 12 && decoded.scrollingDeltaY == -34,
+                    "Drag scroll axes changed")
+            }
+        }
+        for slot in ButtonSlot.directions {
+            mapping.set(ButtonAction(.scroll), for: slot)
+            mapping.set(ButtonAction(.missionControl), for: slot)
+            try require(
+                mapping[slot].kind == .missionControl && !mapping.dragScroll,
+                "Leaving scroll kept a linked direction")
+            try require(
+                ButtonSlot.directions.filter { !mapping[$0].isNone }.count == 1,
+                "Leaving scroll must clear the other directions")
+        }
+        for slot in [ButtonSlot.click, .hold] {
+            mapping[slot] = ButtonAction(.scroll)
+            try require(mapping.normalized()[slot].isNone, "Scroll must not be a press action")
+        }
+        for json in [
+            #"{"buttons":{"forward":{"up":"scroll"}}}"#,
+            #"{"buttons":{"forward":{"click":"scroll"}}}"#,
+            #"{"buttons":{"forward":{"hold":"scroll"}}}"#,
+        ] {
+            do {
+                _ = try ConfigJSON.apply(json, to: Preferences())
+                throw MouseError.message("Invalid scroll configuration was accepted")
+            } catch is ConfigError {}
+        }
+        var pointer = PointerOutput(
+            at: CGPoint(x: 50, y: 60), displays: [CGRect(x: 0, y: 0, width: 100, height: 100)])
+        let first = pointer.event(dx: 10, dy: -20)
+        let second = pointer.event(dx: 10, dy: -20)
+        try require(
+            first?.location == CGPoint(x: 60, y: 40) && second?.location == CGPoint(x: 70, y: 20),
+            "Queued pointer reports lost movement")
+        try require(second?.getIntegerValueField(.mouseEventDeltaY) == -20, "Incorrect pointer delta")
+        _ = pointer.event(dx: .max, dy: .min)
+        try require(pointer.location == CGPoint(x: 99, y: 0), "Pointer escaped the display")
+        _ = pointer.event(dx: -1, dy: 1)
+        try require(pointer.location == CGPoint(x: 98, y: 1), "Pointer stuck at the display edge")
+        var multipleDisplays = PointerOutput(
+            at: CGPoint(x: 0, y: 50),
+            displays: [
+                CGRect(x: -100, y: 0, width: 100, height: 100),
+                CGRect(x: 0, y: 0, width: 100, height: 100),
+            ])
+        _ = multipleDisplays.event(dx: -50, dy: 0)
+        try require(multipleDisplays.location == CGPoint(x: -50, y: 50), "Pointer cannot cross displays")
+        print("PASS: drag scroll links directions, validates JSON, and generates phased two-axis events")
+        print("PASS: pointer reports accumulate and stay within connected displays")
     }
 
     private static func runConfigJSON(_ custom: Preferences) throws {
