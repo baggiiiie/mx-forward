@@ -22,6 +22,8 @@ final class BoltMouse {
         let feature: UInt8
         let discardFirstMovement: Bool
         let availableControls: Set<MouseControl>
+        /// Buttons that can report movement while held.
+        let movementControls: Set<MouseControl>
     }
     private struct Pending {
         let id: UUID
@@ -39,6 +41,7 @@ final class BoltMouse {
     private var nextSoftwareID: UInt8 = 8
     private(set) var connection: Connection?
     private var claims: [MouseControl: ControlReporting] = [:]
+    private var movementClaims = Set<MouseControl>()
     private struct WheelClaim {
         let feature: UInt8
         let shiftFeature: UInt8
@@ -184,18 +187,17 @@ final class BoltMouse {
                     guard index != 0 else { throw MouseError.message("Missing button control feature") }
                     let count = try await self.request(id, slot, index, 0)
                     var availableControls = Set<MouseControl>()
+                    var movementControls = Set<MouseControl>()
                     for position in 0..<min(Int(count.payload[0]), 64) {
                         let info = try await self.request(id, slot, index, 1, [UInt8(position)])
                         guard info.payload.count >= 5, info.payload[4] & 0x20 != 0,
                             let control = MouseControl(
                                 rawValue: UInt16(info.payload[0]) << 8 | UInt16(info.payload[1]))
                         else { continue }
-                        if control.reportsMovement
-                            && (info.payload.count < 9 || info.payload[8] & 1 == 0)
-                        {
-                            continue
-                        }
                         availableControls.insert(control)
+                        if info.payload.count >= 9, info.payload[8] & 1 != 0 {
+                            movementControls.insert(control)
+                        }
                     }
                     guard availableControls.contains(.forward) else {
                         throw MouseError.message("Forward button does not support software control.")
@@ -203,7 +205,8 @@ final class BoltMouse {
                     guard self.connection == nil else { return }
                     self.connection = Connection(
                         endpoint: id, slot: slot, feature: index,
-                        discardFirstMovement: special.payload[2] >= 5, availableControls: availableControls)
+                        discardFirstMovement: special.payload[2] >= 5, availableControls: availableControls,
+                        movementControls: movementControls)
                     self.onStatus("\(name) connected · Bolt slot \(slot)")
                     self.onLog(
                         "Available buttons: \(availableControls.sorted().map(\.name).joined(separator: ", "))"
@@ -232,7 +235,8 @@ final class BoltMouse {
     }
 
     func claim(
-        _ controls: Set<MouseControl>, wheelMode: WheelMode? = nil, horizontalInverted: Bool? = nil
+        _ controls: Set<MouseControl>, movement: Set<MouseControl> = [], wheelMode: WheelMode? = nil,
+        horizontalInverted: Bool? = nil
     ) async throws {
         guard let c = connection else { throw MouseError.message("Discover your mouse first.") }
         guard !claimed else { return }
@@ -244,6 +248,12 @@ final class BoltMouse {
             throw MouseError.message(
                 "Mouse control unavailable: \(unavailable.sorted().map(\.name).joined(separator: ", ")).")
         }
+        let movement = movement.intersection(controls)
+        let stationary = movement.subtracting(c.movementControls)
+        if !stationary.isEmpty {
+            throw MouseError.message(
+                "Dragging isn't supported on: \(stationary.sorted().map(\.name).joined(separator: ", ")).")
+        }
         do {
             for control in controls.sorted() {
                 let settings = try await readReporting(control, c)
@@ -251,15 +261,19 @@ final class BoltMouse {
                     throw MouseError.message("Mouse connection changed. Discover again.")
                 }
                 // Keep cleanup state even if the write succeeds but its reply is lost.
+                let rawMovement = movement.contains(control)
                 claims[control] = settings
-                _ = try await request(c.endpoint, c.slot, c.feature, 3, settings.parameters(divert: true))
+                if rawMovement { movementClaims.insert(control) }
+                _ = try await request(
+                    c.endpoint, c.slot, c.feature, 3,
+                    settings.parameters(divert: true, rawMovement: rawMovement))
                 let state = try await readReporting(control, c)
                 guard state.temporarilyDiverted, state.remap == settings.remap,
-                    state.rawMovement == control.reportsMovement
+                    state.rawMovement == rawMovement
                 else {
                     throw MouseError.message("The mouse did not confirm control of \(control.name).")
                 }
-                onLog("Claimed \(control.name)\(control.reportsMovement ? " with raw movement" : "")")
+                onLog("Claimed \(control.name)\(rawMovement ? " with raw movement" : "")")
             }
             if let wheelMode { try await claimWheel(wheelMode, c) }
             if let horizontalInverted { try await claimHorizontal(horizontalInverted, c) }
@@ -290,6 +304,7 @@ final class BoltMouse {
                     throw MouseError.message("Mouse did not confirm restoration of \(control.name).")
                 }
                 claims.removeValue(forKey: control)
+                movementClaims.remove(control)
                 onLog("Restored \(control.name)")
             } catch { failure = failure ?? error }
         }
@@ -321,6 +336,7 @@ final class BoltMouse {
                 device, c, feature: c.feature, function: 3, payload: settings.parameters(divert: false))
             {
                 claims.removeValue(forKey: control)
+                movementClaims.remove(control)
             }
         }
         return !claimed
@@ -332,7 +348,7 @@ final class BoltMouse {
             guard let original = claims[control] else { return false }
             let state = try await readReporting(control, c)
             guard state.temporarilyDiverted, state.remap == original.remap,
-                state.rawMovement == control.reportsMovement
+                state.rawMovement == movementClaims.contains(control)
             else { return false }
         }
         if let horizontal = horizontalClaim {
@@ -371,6 +387,7 @@ final class BoltMouse {
         if connection?.endpoint == id {
             connection = nil
             claims.removeAll()
+            movementClaims.removeAll()
             wheelClaim = nil
             horizontalClaim = nil
             onDisconnect()
@@ -408,7 +425,7 @@ final class BoltMouse {
             for control in claims.keys.sorted() {
                 onPress(control, packet.pressedControls.contains(control.rawValue))
             }
-        } else if claims.keys.contains(where: \.reportsMovement), let movement = packet.movement {
+        } else if !movementClaims.isEmpty, let movement = packet.movement {
             onMovement(movement.dx, movement.dy)
         }
     }

@@ -2,14 +2,10 @@
 
 A small native macOS app for the MX Master 3S with a **Logi Bolt USB receiver**.
 
-- Click Forward: defaults to **⌘]** on release; click its shortcut to record different keys.
-- Click Back: defaults to **⌘[** on release; its shortcut is configurable.
-- Optional Forward hold: sends your recorded shortcut once, without also going Forward. With hold off, even a long press navigates once on release.
-- Adjustable hold delay (150–1500 ms, initially 400 ms).
-- Thumb-button gestures: separate recorders for click, up, down, left, and right. Defaults are Mission Control for click/up, App Exposé for down, and desktop switching for left/right. Gesture sensitivity is adjustable.
-- Top button: choose Smart Zoom, a recorded keyboard shortcut, or no action for a click. Hold and move up/down for continuous pinch zoom.
-- Horizontal top-button movement does not rotate or trigger smart zoom.
-- Separate feature toggles let you test zoom without configuring Forward. Hold zoom speed ranges from 25–600%, initially 200%.
+- Every clickable button (Forward, Back, Gesture, Top, and pressing the wheel) has the same three kinds of action: **click**, **hold**, and **hold and drag** up, down, left, or right. Each slot can send a recorded shortcut, Mission Control, App Exposé, a desktop switch, Smart Zoom, a middle click, or nothing. Up and down can also zoom continuously.
+- Defaults: Forward clicks **⌘]**, Back clicks **⌘[**. The gesture button opens Mission Control on click and drag up, App Exposé on drag down, and switches desktops on drag left/right. The top button Smart Zooms on click and pinch-zooms while dragged up or down. The wheel button starts off; turning it on replaces the native middle click with its actions.
+- A hold fires once after the button's hold delay (150–1500 ms, initially 400 ms), and the click then doesn't fire. With no hold action, a long press is a click. Dragging before the hold delay cancels the hold.
+- Drag sensitivity (25–300%) and zoom speed (25–600%, initially 200%) are set per button.
 - Main-wheel control: scroll speed (25–600%), natural or standard direction, adjustable acceleration, and ratchet/free-spin modes. Keep current mode preserves existing SmartShift behavior. Initially off.
 - Horizontal thumb-wheel direction: Keep current, Standard, or Reversed. Applies independently of the main wheel and restores the previous direction on Pause or Quit.
 - Test mode shows actions without sending them. Pause restores the selected buttons.
@@ -36,16 +32,15 @@ Quit MX Forward before rebuilding. Builds are ad-hoc signed by default; macOS ma
 
 ## Try it
 
-1. In the **Buttons** tab, click **Forward** or **Back** on the mouse picture and turn the button on. Click the displayed shortcut, then press a key or combination to record it. Escape cancels; Clear disables that action, and the reset arrow restores its default. No hold shortcut is required. To add one, turn **Hold Forward for a shortcut** on, click **Record shortcut**, and press your key combination. Escape cancels. The timing pad previews the hold delay. Settings save automatically.
+1. In the **Buttons** tab, click a button on the mouse picture. Pick an action for its click, hold, and each drag direction. For **Keyboard shortcut**, click the recorder and press your keys; Escape cancels. **Restore defaults** resets the button. The timing pad previews the hold delay. Settings save automatically.
 2. Add **MX Forward** under **System Settings → Privacy & Security → Accessibility** for live keyboard and zoom actions. Add **Input Monitoring** only if discovery is blocked. Restart after changing permissions if needed.
 3. The app discovers the mouse automatically. Move it to wake it if needed and allow a few seconds. **Discover mouse** remains available for a manual retry.
 4. Stop Logitech's background agent with the command below. Closing the Options+ window is not enough. Its other custom gestures may stop working while the agent is stopped.
-5. Keep **Test mode** on, click **Enable**, then click both side buttons. Check the displayed Forward and Back actions. If Forward hold is enabled, check that a long press sends only its shortcut.
-6. For zoom alone, turn **Forward** and **Back** off and keep **Use top button** on. Choose a **Single click** action. Record its shortcut if you choose **Keyboard shortcut**.
-7. Turn Test mode off while enabled, or turn it off before you Enable. Point at content in a browser or image viewer. Click the top button for your chosen action; hold it and move up to zoom in or down to zoom out. Adjust **Hold zoom speed** while enabled; higher values need less mouse movement. Click and hold actions are independent.
-8. For the main wheel, select it on the mouse picture, turn **Control main wheel** on, choose **Scroll speed**, **Natural scrolling**, **Acceleration**, and **Wheel mode**. Acceleration starts at 100%; set it to 0% for constant speed. If mappings are already enabled, changes apply automatically. Ratchet locks the notches; Free-spin removes them. Keep current mode leaves the existing SmartShift mode and threshold untouched. These controls affect only the MX Master 3S main wheel.
-9. Select the **Thumb wheel** and choose **Standard** or **Reversed**. This applies automatically while enabled. Keep current direction leaves the native setting alone.
-10. **Open zoom verification** (Top button or **Setup** tab) provides a native test canvas. Its buttons send real macOS gesture events; its status confirms whether they reached `magnify` / `smartMagnify` handlers. Test mode suppresses mouse actions, but these explicit verification buttons still send events into this test window.
+5. Keep **Test mode** on, click **Enable**, then click, hold, and drag each button. The footer shows which action each one would send, such as "Back hold → Mission Control".
+6. Turn Test mode off while enabled, or turn it off before you Enable. Point at content in a browser or image viewer. Click the top button for Smart Zoom; hold it and move up to zoom in or down to zoom out. Higher **Zoom speed** needs less mouse movement.
+7. For the main wheel, select it on the mouse picture, turn **Control main wheel** on, choose **Scroll speed**, **Natural scrolling**, **Acceleration**, and **Wheel mode**. Acceleration starts at 100%; set it to 0% for constant speed. If mappings are already enabled, changes apply automatically. Ratchet locks the notches; Free-spin removes them. Keep current mode leaves the existing SmartShift mode and threshold untouched. These controls affect only the MX Master 3S main wheel.
+8. Select the **Thumb wheel** and choose **Standard** or **Reversed**. This applies automatically while enabled. Keep current direction leaves the native setting alone.
+9. **Open zoom verification** (Top button or **Setup** tab) provides a native test canvas. Its buttons send real macOS gesture events; its status confirms whether they reached `magnify` / `smartMagnify` handlers. Test mode suppresses mouse actions, but these explicit verification buttons still send events into this test window.
 
 ```sh
 ./scripts/logitech-session.sh stop
@@ -57,45 +52,47 @@ The stop command disables Logitech's automatic launch and stops its device agent
 
 ## JSON configuration
 
-Settings are mirrored to `~/.config/mx-forward/config.json`, grouped per button. Edit it in any editor; saved changes apply within a second. Changes made in the app are written back. If the file has an error, the app keeps your edits, shows the problem, and offers to replace the file with the current settings. The **JSON** tab has an editor (⌘S applies), import/export, and a reference.
+Settings are mirrored to `~/.config/mx-forward/config.json`. Every button has the same keys. Edit it in any editor; saved changes apply within a second. Changes made in the app are written back. If the file has an error, the app keeps your edits, shows the problem, and offers to replace the file with the current settings. The **JSON** tab has an editor (⌘S applies), import/export, and a reference.
 
 ```json
 {
   "testMode": false,
   "buttons": {
-    "forward": { "enabled": true, "click": "default", "hold": { "enabled": true, "shortcut": "cmd+shift+t", "delayMs": 400 } },
-    "back": { "enabled": true, "click": "cmd+[" },
-    "gesture": { "enabled": true, "click": "default", "up": "default", "down": "none", "left": "ctrl+left", "right": "ctrl+right", "sensitivityPercent": 100 },
-    "top": { "enabled": true, "click": "smartZoom", "zoomSpeedPercent": 200 },
-    "wheel": { "enabled": true, "speedPercent": 150, "accelerationPercent": 100, "natural": true, "mode": "ratchet" },
-    "thumbWheel": { "direction": "reversed" }
-  }
+    "forward": { "enabled": true, "click": "cmd+]", "hold": "cmd+shift+t", "holdDelayMs": 400 },
+    "back": { "click": "cmd+[", "up": "missionControl", "down": "appExpose", "dragSensitivityPercent": 100 },
+    "gesture": { "click": "missionControl", "left": "desktopLeft", "right": "desktopRight" },
+    "top": { "click": "smartZoom", "up": "zoom", "down": "zoom", "zoomSpeedPercent": 200 },
+    "wheelButton": { "enabled": false, "click": "middleClick" }
+  },
+  "wheel": { "enabled": true, "speedPercent": 150, "accelerationPercent": 100, "natural": true, "mode": "ratchet" },
+  "thumbWheel": { "direction": "reversed" }
 }
 ```
 
-- Actions are `"default"` (the built-in action or macOS shortcut), `"none"`, or a shortcut such as `"cmd+shift+]"` or `"⌘⇧]"`. The top button also accepts `"smartZoom"`.
+- Buttons are `forward`, `back`, `gesture`, `top`, and `wheelButton`. Each takes `enabled`, the action slots `click`, `hold`, `up`, `down`, `left`, `right`, and `holdDelayMs`, `dragSensitivityPercent`, `zoomSpeedPercent`.
+- Actions are a shortcut such as `"cmd+shift+]"` or `"⌘⇧]"`, `"none"`, `"missionControl"`, `"appExpose"`, `"desktopLeft"`, `"desktopRight"`, `"smartZoom"`, `"middleClick"`, or `"zoom"` (up and down only, and both together). `"default"` restores that slot's built-in action.
 - Modifiers: `cmd`, `opt`, `ctrl`, `shift`, `fn`. Keys: letters, digits, punctuation, `return`, `tab`, `space`, `delete`, `escape`, arrow names, `home`, `end`, `pageup`, `pagedown`, `f1`–`f20`. Key names refer to US-layout key positions; shortcuts recorded on other layouts are written as `{"keyCode": 30, "modifiers": ["cmd"], "label": "+"}`.
 - `wheel.mode`: `unchanged`, `ratchet`, `freeSpin`. `thumbWheel.direction`: `unchanged`, `standard`, `reversed`. Percentages use 100 for 100% and are clamped to the app's slider ranges.
 - Any key can be omitted to keep its current value, so a file can contain just the settings you care about.
 
 ## Behavior and recovery
 
-- Side-button clicks default to **⌘[** for Back and **⌘]** for Forward. Record the shortcuts your apps or keyboard layout use instead when needed.
-- Thumb gestures follow your macOS Mission Control and desktop-switching shortcuts until you record an override for that gesture. Click and hold-up are independent. Clear disables just that action; reset resumes following macOS, including disabled system shortcuts. Each press triggers one action when movement crosses the gesture threshold; release before the next gesture. Holding both gesture buttons cancels their gestures until both are released.
+- Mission Control, App Exposé, and desktop actions follow your macOS keyboard shortcuts for them, including disabled ones. Record a shortcut instead if you want a fixed key.
+- A drag fires one action when movement crosses the drag distance; release before the next one. While a button has any drag action, macOS doesn't move the pointer while that button is held. Buttons without drag actions leave the pointer alone. Holding two buttons with drag actions at once cancels both until they're released.
 - Shortcuts store a keycode and modifiers and target the active app when they fire. Click a shortcut field and press your keys to replace it. Recording temporarily suppresses mouse shortcut and gesture actions; Escape, leaving the window, or disabling the recorder cancels it. System shortcuts are captured before macOS handles them when Accessibility is granted.
 - Editing settings cancels any unfinished mouse gesture or hold, including its release action. Shortcut and speed changes do not release mouse ownership. Selected controls, wheel mode, and horizontal direction reconnect automatically, retaining the enabled state. Editing while explicitly paused leaves mappings paused.
 - Closing the window keeps the app in the menu bar, where you can Pause or Quit.
 - Sleep, disconnect, permission loss, or a restarted Logitech agent suspends the mapping. It reconnects and resumes once the mouse and permissions are available and Logitech's agent is stopped. Explicit Pause disables automatic resume; Enable turns it back on. Quit restores the hardware while preserving this choice for the next launch.
 - Main-wheel control reads high-resolution wheel reports directly from Bolt and sends vertical pixel scrolling. At 100% baseline speed, slow scrolling moves 40 pixels per notch. Acceleration estimates wheel speed from notch distance and elapsed time, then smoothly boosts fast spins. At 100% acceleration the maximum boost is 5×; at 200% it is 9×. Pausing for 250 ms, reversing direction, or editing settings clears the boost. This approximates the fast-spin behavior; Logitech’s exact curve has not been measured. Horizontal direction is controlled separately through the thumb wheel’s native hardware setting. Keyboard modifiers are preserved. This does not add inertial scrolling.
-- Pause and Quit restore native main-wheel scrolling and the prior wheel mode/SmartShift threshold, then clear diversion for the selected buttons and preserve their current hardware remap targets. Raw movement reporting is also cleared for both gesture buttons. Sleep cleanup sends restoration commands without waiting for replies.
-- Zoom uses native magnification and smart-zoom events, not Command-plus/minus. An app must support those gestures. The adapter uses undocumented macOS gesture fields, so compatibility is verified against the installed OS. The sensitivity control tunes movement distance; exact Logitech sensitivity has not been measured.
-- On button-feature version 5 and later, the first raw movement report is discarded to avoid the MX Master 3S stale-movement jump. A small dead zone separates clicks from gestures.
+- Pause and Quit restore native main-wheel scrolling and the prior wheel mode/SmartShift threshold, then clear diversion for the selected buttons and preserve their current hardware remap targets. Raw movement reporting is also cleared for every button that used it. Sleep cleanup sends restoration commands without waiting for replies.
+- Zoom uses native magnification and smart-zoom events, not Command-plus/minus. An app must support those gestures. The adapter uses undocumented macOS gesture fields, so compatibility is verified against the installed OS. Zoom speed tunes movement distance; exact Logitech sensitivity has not been measured.
+- On button-feature version 5 and later, the first raw movement report is discarded to avoid the MX Master 3S stale-movement jump. A small dead zone separates clicks from drags.
 - After a crash, forced quit, or failed restoration, **turn the mouse off and on**. The app reconnects automatically; click Enable if you previously paused it.
 - Bluetooth and other mouse models are not supported. Mac Mouse Fix can keep running, but avoid mapping the same side buttons in both apps.
 
 ## Validation
 
-The 68 core checks cover independent Forward/Back clicks, Forward holds, thumb gestures in all directions, overlapping gesture buttons, cancellation, continuous zoom, jitter, the stale first-report filter, signed movement parsing, button reporting, wheel packet decoding, speed/direction, fractional-pixel accumulation, acceleration strength, packet-rate independence, slow-scroll precision, reversals, idle reset, numeric bounds, and horizontal-direction reporting flags. macOS also decodes the generated events as native magnify / smart-magnify events with the expected phases.
+The 48 core checks cover click, hold, and drag in all four directions, holds cancelled by drags, continuous zoom, cancellation, jitter, the stale first-report filter, signed movement parsing, button reporting, wheel packet decoding, speed/direction, fractional-pixel accumulation, acceleration strength, packet-rate independence, slow-scroll precision, reversals, idle reset, numeric bounds, and horizontal-direction reporting flags. macOS also decodes the generated events as native magnify / smart-magnify events with the expected phases.
 
 Run the optional hardware checks with MX Forward quit, Logitech's device agent stopped, and an awake MX Master 3S connected through Bolt:
 
@@ -105,7 +102,7 @@ Run the optional hardware checks with MX Forward quit, Logitech's device agent s
 
 These use separate test preferences and send no keyboard, zoom, or scroll actions. They check preference migration, custom/cleared mapping persistence, JSON config round-trips, partial files, and error messages, recorder capture/cancellation, system-shortcut parsing and arrow-key event flags, claim and restore the selected buttons, simulate sleep/wake notifications, check that Enable is ignored during sleep, and verify Pause and quit behavior. Live shortcut/speed/acceleration changes, automatic hardware updates, and disabling/re-enabling all controls are also tested. They also verify all three wheel-mode choices, both horizontal directions, and restoration on the real mouse, and decode generated pixel-scroll events with macOS. They do not put the Mac to sleep.
 
-Verified on the MX Master 3S in Bolt slot 2 with button-feature version 5. Manual checks confirmed Back, Forward, the Forward hold shortcut, smart zoom, and held zoom at 200%. Manual checks also confirmed thumb click/up for Mission Control, down for App Exposé, and left/right for desktop switching. Live main-wheel scrolling also works in the installed build; the speed, direction, and wheel-mode controls were tried without a reported failure. Live shortcut recording and playback while enabled are confirmed. Manual comparison also confirmed that fast-spin acceleration feels right while slow scrolling stays precise. Manual checks confirmed that Standard/Reversed flips horizontal scrolling while enabled. The top-button keyboard-shortcut click action still needs a manual check.
+Verified on the MX Master 3S in Bolt slot 2 with button-feature version 5. Manual checks confirmed Back, Forward, the Forward hold shortcut, smart zoom, and held zoom at 200%. Manual checks also confirmed thumb click/up for Mission Control, down for App Exposé, and left/right for desktop switching. Live main-wheel scrolling also works in the installed build; the speed, direction, and wheel-mode controls were tried without a reported failure. Live shortcut recording and playback while enabled are confirmed. Manual comparison also confirmed that fast-spin acceleration feels right while slow scrolling stays precise. Manual checks confirmed that Standard/Reversed flips horizontal scrolling while enabled. Those checks predate per-button click/hold/drag; hold and drag on Forward, Back, and the wheel button, and the top-button shortcut click, still need a manual check.
 
 Protocol references: [MXControl's Special Keys implementation](https://github.com/wiscaksono/MXControl/blob/main/Sources/MXControlHIDPP/Features/SpecialKeysFeature.swift) and [USB transport](https://github.com/wiscaksono/MXControl/blob/main/Sources/MXControlHIDPP/Transport/USBTransport.swift). No MXControl source is included here.
 

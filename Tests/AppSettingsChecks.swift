@@ -9,39 +9,50 @@ enum AppSettingsChecks {
 
     static func run() throws {
         let legacy = Data(
-            #"{"holdMilliseconds":650,"shortcut":{"keyCode":35,"modifiers":1179648,"keyLabel":"P"},"zoomSensitivity":2,"resumeMappings":true}"#
+            #"{"holdMilliseconds":650,"shortcut":{"keyCode":35,"modifiers":1179648,"keyLabel":"P"},"zoomSensitivity":3,"resumeMappings":true,"backClick":{"source":"none"},"thumbShortcuts":{"up":{"source":"none"}},"topClickAction":"none"}"#
                 .utf8)
         let migrated = try JSONDecoder().decode(Preferences.self, from: legacy)
+        var expectedButtons = ButtonMappings()
+        expectedButtons.forward.hold = .shortcut(
+            Shortcut(keyCode: 35, modifiers: 1_179_648, keyLabel: "P"))
+        expectedButtons.forward.holdMilliseconds = 650
+        expectedButtons.back.click = ButtonAction(.none)
+        expectedButtons.thumb.up = ButtonAction(.none)
+        expectedButtons.top.click = ButtonAction(.none)
+        expectedButtons.top.zoomSpeed = 3
         try require(
-            migrated.holdMilliseconds == 650 && migrated.forwardHoldEnabled
-                && migrated.shortcut?.keyCode == 35 && migrated.zoomSensitivity == 2
-                && migrated.resumeMappings && migrated.forwardClick.source == .defaultShortcut
-                && migrated.backClick.source == .defaultShortcut && migrated.thumbShortcuts.isEmpty
-                && migrated.wheelAcceleration == 1 && migrated.horizontalDirection == .unchanged,
+            migrated.buttons == expectedButtons && migrated.resumeMappings && migrated.wheelAcceleration == 1
+                && migrated.horizontalDirection == .unchanged,
             "Existing preferences did not migrate intact")
+        print("PASS: preferences from older versions migrate to per-button click, hold, and drag actions")
+
         let custom = Shortcut(keyCode: 0, modifiers: CGEventFlags.maskCommand.rawValue, keyLabel: "A")
         var preferences = migrated
-        preferences.forwardClick = ShortcutMapping(source: .custom, shortcut: custom)
-        preferences.backClick = ShortcutMapping(source: .none)
-        preferences.thumbShortcuts["click"] = ShortcutMapping(source: .custom, shortcut: custom)
-        preferences.thumbShortcuts["up"] = ShortcutMapping(source: .none)
+        preferences.buttons.forward.click = .shortcut(custom)
+        preferences.buttons.back.hold = ButtonAction(.missionControl)
+        preferences.buttons.thumb.click = .shortcut(custom)
+        preferences.buttons.top.left = ButtonAction(.desktopLeft)
+        preferences.buttons.middle.enabled = true
+        preferences.buttons.middle.down = ButtonAction(.appExpose)
         preferences.wheelAcceleration = 1.5
         preferences.horizontalDirection = .reversed
-        preferences.topClickAction = .shortcut
-        preferences.topClickShortcut = custom
         let restored = try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(preferences))
-        try require(restored == preferences, "Custom and cleared mappings did not survive saving")
+        try require(restored == preferences, "Custom and cleared actions did not survive saving")
         try require(
-            restored.forwardClick.resolve(default: .forward) == custom
-                && restored.backClick.resolve(default: .back) == nil
-                && restored.thumbShortcut(.click) == custom && restored.thumbShortcut(.up) == nil,
-            "A custom or cleared shortcut fell back to a preset")
+            restored.hardwareConfiguration.movementControls == [.thumb, .top, .middle],
+            "Only buttons with a drag action should freeze the pointer")
+
+        var mapping = ButtonMapping()
+        mapping.set(ButtonAction(.zoom), for: .up)
+        try require(mapping.down.kind == .zoom, "Zoom must follow both drag directions")
+        mapping.set(.shortcut(custom), for: .down)
+        try require(mapping.up.isNone && mapping.down.shortcut == custom, "Leaving zoom must clear its pair")
+        mapping.left = ButtonAction(.zoom)
+        mapping.holdMilliseconds = 10
         try require(
-            ShortcutMapping().resolve(default: .back) == .back
-                && ShortcutMapping().resolve(default: nil) == nil
-                && ShortcutMapping(source: .custom, shortcut: custom).resolve(default: nil) == custom,
-            "Defaults must follow system settings while custom shortcuts remain independent")
-        print("PASS: existing preferences migrate and every custom/cleared shortcut persists independently")
+            mapping.normalized().left.isNone && mapping.normalized().holdMilliseconds == 150,
+            "Normalizing must drop sideways zoom and clamp timing")
+        print("PASS: every button saves click, hold, and drag actions; zoom stays on up and down together")
         preferences.wheelAcceleration = 0
         preferences.save()
         try require(Preferences.load().wheelAcceleration == 0, "Disabled acceleration did not persist")
@@ -103,9 +114,9 @@ enum AppSettingsChecks {
     private static func runConfigJSON(_ custom: Preferences) throws {
         var preferences = custom
         preferences.wheelSpeed = 0.25 + 0.05 * 18
-        preferences.thumbShortcuts["left"] = ShortcutMapping(
-            source: .custom,
-            shortcut: Shortcut(keyCode: 30, modifiers: CGEventFlags.maskCommand.rawValue, keyLabel: "+"))
+        preferences.buttons.thumb.dragSensitivity = 0.25 + 0.05 * 7
+        preferences.buttons.thumb.left = .shortcut(
+            Shortcut(keyCode: 30, modifiers: CGEventFlags.maskCommand.rawValue, keyLabel: "+"))
         var base = Preferences()
         base.resumeMappings = preferences.resumeMappings
         let text = ConfigJSON.encode(preferences)
@@ -116,8 +127,12 @@ enum AppSettingsChecks {
         try require(
             try ConfigJSON.apply(text, to: preferences) == preferences, "An unchanged file changed settings")
         try require(text.contains(#""click": "cmd+a""#), "Shortcuts should be written as readable text")
+        try require(text.contains(#""hold": "missionControl""#), "Actions should be written by name")
         try require(text.contains(#""label": "+""#), "Layout labels were lost")
-        print("PASS: JSON configuration round-trips custom, cleared, and non-US shortcuts exactly")
+        try require(
+            text.range(of: #""forward""#)!.lowerBound < text.range(of: #""wheelButton""#)!.lowerBound,
+            "Buttons should be written in a stable order")
+        print("PASS: JSON configuration round-trips every button's actions and non-US shortcuts exactly")
 
         let cmd = CGEventFlags.maskCommand.rawValue
         let shift = CGEventFlags.maskShift.rawValue
@@ -134,16 +149,19 @@ enum AppSettingsChecks {
         print("PASS: shortcut text parses modifiers, symbols, and named keys, and rejects unknown names")
 
         let partial = try ConfigJSON.apply(
-            #"{"buttons": {"back": {"click": "none"}, "wheel": {"speedPercent": 5000, "mode": "freeSpin"}}}"#,
+            #"{"buttons": {"back": {"click": "none", "hold": "cmd+w"}, "forward": {"click": "default"}}, "wheel": {"speedPercent": 5000, "mode": "freeSpin"}}"#,
             to: preferences)
         var expected = preferences
-        expected.backClick = ShortcutMapping(source: .none)
+        expected.buttons.back.click = ButtonAction(.none)
+        expected.buttons.back.hold = .shortcut(try ShortcutText.parse("cmd+w"))
+        expected.buttons.forward.click = .shortcut(.forward)
         expected.wheelSpeed = 6
         expected.wheelMode = .freeSpin
         try require(partial == expected, "Partial JSON changed unrelated settings or skipped clamping")
         let failures: [(String, String)] = [
-            (#"{"buttons": {"forward": {"click": "smartZoom"}}}"#, "buttons.forward.click"),
-            (#"{"buttons": {"wheel": {"mode": "spin"}}}"#, "mode"),
+            (#"{"buttons": {"forward": {"left": "zoom"}}}"#, "buttons.forward.left"),
+            (#"{"buttons": {"top": {"up": "missionControl"}}}"#, "set both to \"zoom\""),
+            (#"{"wheel": {"mode": "spin"}}"#, "mode"),
             (#"{"buttons": {"top": {"enabled": "yes"}}}"#, "true or false"),
             (#"{"buttons": {"gesture": {"up": "cmd+nope"}}}"#, "nope"),
             ("{ not json", "Invalid JSON"),

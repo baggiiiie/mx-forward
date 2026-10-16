@@ -2,51 +2,70 @@ import CoreGraphics
 import ForwardCore
 import Foundation
 
-/// The JSON config file, grouped per button. Missing keys keep their current value.
+/// The JSON config file. Every button has the same keys; missing keys keep their current value.
 struct ConfigDocument: Codable, Equatable {
     var testMode: Bool?
     var buttons: Buttons?
+    var wheel: Wheel?
+    var thumbWheel: ThumbWheel?
 
     struct Buttons: Codable, Equatable {
-        var back: SideButton?
-        var forward: ForwardButton?
-        var gesture: GestureButton?
-        var top: TopButton?
-        var wheel: Wheel?
-        var thumbWheel: ThumbWheel?
+        var forward: Button?
+        var back: Button?
+        var gesture: Button?
+        var top: Button?
+        var wheelButton: Button?
+
+        /// JSON names in file order.
+        static let names: [(String, MouseControl)] = [
+            ("forward", .forward), ("back", .back), ("gesture", .thumb), ("top", .top),
+            ("wheelButton", .middle),
+        ]
+
+        subscript(_ control: MouseControl) -> Button? {
+            get {
+                switch control {
+                case .forward: return forward
+                case .back: return back
+                case .thumb: return gesture
+                case .top: return top
+                case .middle: return wheelButton
+                }
+            }
+            set {
+                switch control {
+                case .forward: forward = newValue
+                case .back: back = newValue
+                case .thumb: gesture = newValue
+                case .top: top = newValue
+                case .middle: wheelButton = newValue
+                }
+            }
+        }
     }
 
-    struct SideButton: Codable, Equatable {
+    struct Button: Codable, Equatable {
         var enabled: Bool?
         var click: ConfigAction?
-    }
-
-    struct ForwardButton: Codable, Equatable {
-        var enabled: Bool?
-        var click: ConfigAction?
-        var hold: Hold?
-    }
-
-    struct Hold: Codable, Equatable {
-        var enabled: Bool?
-        var shortcut: ConfigAction?
-        var delayMs: Double?
-    }
-
-    struct GestureButton: Codable, Equatable {
-        var enabled: Bool?
-        var sensitivityPercent: Double?
-        var click: ConfigAction?
+        var hold: ConfigAction?
         var up: ConfigAction?
         var down: ConfigAction?
         var left: ConfigAction?
         var right: ConfigAction?
-    }
-
-    struct TopButton: Codable, Equatable {
-        var enabled: Bool?
-        var click: ConfigAction?
+        var holdDelayMs: Double?
+        var dragSensitivityPercent: Double?
         var zoomSpeedPercent: Double?
+
+        subscript(_ slot: ButtonSlot) -> ConfigAction? {
+            switch slot {
+            case .click: return click
+            case .hold: return hold
+            case .up: return up
+            case .down: return down
+            case .left: return left
+            case .right: return right
+            }
+        }
     }
 
     struct Wheel: Codable, Equatable {
@@ -62,12 +81,12 @@ struct ConfigDocument: Codable, Equatable {
     }
 }
 
-/// `"default"`, `"none"`, `"smartZoom"`, or a shortcut such as `"cmd+shift+]"`.
+/// An action name such as `"missionControl"`, `"none"`, or `"default"`, or a shortcut such as `"cmd+shift+]"`.
 /// Shortcuts that can't be written as text use `{"keyCode": 30, "modifiers": ["cmd"], "label": "+"}`.
 enum ConfigAction: Codable, Equatable {
-    enum Keyword: String, CaseIterable { case `default`, none, smartZoom }
-    case keyword(Keyword)
-    case shortcut(Shortcut)
+    /// The button's built-in action for that slot. Only read, never written.
+    case `default`
+    case action(ButtonAction)
 
     private struct ShortcutObject: Codable {
         var keyCode: UInt16
@@ -78,15 +97,18 @@ enum ConfigAction: Codable, Equatable {
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
         if container.decodeNil() {
-            self = .keyword(.none)
+            self = .action(ButtonAction(.none))
         } else if let text = try? container.decode(String.self) {
             let trimmed = text.trimmingCharacters(in: .whitespaces)
-            if let keyword = Keyword.allCases.first(where: {
-                $0.rawValue.caseInsensitiveCompare(trimmed) == .orderedSame
+            func named(_ name: String) -> Bool { name.caseInsensitiveCompare(trimmed) == .orderedSame }
+            if named("default") {
+                self = .default
+            } else if let kind = ButtonAction.Kind.allCases.first(where: {
+                $0 != .shortcut && named($0.rawValue)
             }) {
-                self = .keyword(keyword)
+                self = .action(ButtonAction(kind))
             } else {
-                do { self = .shortcut(try ShortcutText.parse(trimmed)) } catch {
+                do { self = .action(.shortcut(try ShortcutText.parse(trimmed))) } catch {
                     throw DecodingError.dataCorruptedError(
                         in: container, debugDescription: error.localizedDescription)
                 }
@@ -101,20 +123,23 @@ enum ConfigAction: Codable, Equatable {
                 }
                 modifiers |= flag
             }
-            self = .shortcut(
-                Shortcut(
-                    keyCode: object.keyCode, modifiers: modifiers,
-                    keyLabel: object.label
-                        ?? Shortcut.keyName(
-                            object.keyCode, characters: ShortcutText.name(for: object.keyCode))))
+            self = .action(
+                .shortcut(
+                    Shortcut(
+                        keyCode: object.keyCode, modifiers: modifiers,
+                        keyLabel: object.label
+                            ?? Shortcut.keyName(
+                                object.keyCode, characters: ShortcutText.name(for: object.keyCode)))))
         }
     }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
         switch self {
-        case .keyword(let keyword): try container.encode(keyword.rawValue)
-        case .shortcut(let shortcut):
+        case .default: try container.encode("default")
+        case .action(let action):
+            guard action.kind == .shortcut else { return try container.encode(action.kind.rawValue) }
+            guard let shortcut = action.shortcut else { return try container.encode("none") }
             if let text = ShortcutText.format(shortcut) {
                 try container.encode(text)
             } else {
@@ -220,45 +245,25 @@ enum ConfigJSON {
         .appendingPathComponent(".config/mx-forward/config.json")
 
     static func document(from preferences: Preferences) -> ConfigDocument {
-        func action(_ mapping: ShortcutMapping) -> ConfigAction {
-            switch mapping.source {
-            case .defaultShortcut: return .keyword(.default)
-            case .none: return .keyword(.none)
-            case .custom: return mapping.shortcut.map(ConfigAction.shortcut) ?? .keyword(.none)
-            }
-        }
-        func gesture(_ gesture: ThumbGestureInterpreter.Action) -> ConfigAction {
-            action(preferences.thumbShortcuts[gesture.rawValue] ?? ShortcutMapping())
-        }
-        let topClick: ConfigAction
-        switch preferences.topClickAction {
-        case .smartZoom: topClick = .keyword(.smartZoom)
-        case .none: topClick = .keyword(.none)
-        case .shortcut: topClick = preferences.topClickShortcut.map(ConfigAction.shortcut) ?? .keyword(.none)
+        var buttons = ConfigDocument.Buttons()
+        for (_, control) in ConfigDocument.Buttons.names {
+            let mapping = preferences.buttons[control]
+            func action(_ slot: ButtonSlot) -> ConfigAction { .action(mapping[slot]) }
+            buttons[control] = .init(
+                enabled: mapping.enabled, click: action(.click), hold: action(.hold), up: action(.up),
+                down: action(.down), left: action(.left), right: action(.right),
+                holdDelayMs: mapping.holdMilliseconds,
+                dragSensitivityPercent: percent(mapping.dragSensitivity),
+                zoomSpeedPercent: percent(mapping.zoomSpeed))
         }
         return ConfigDocument(
-            testMode: preferences.testMode,
-            buttons: .init(
-                back: .init(enabled: preferences.backEnabled, click: action(preferences.backClick)),
-                forward: .init(
-                    enabled: preferences.forwardEnabled, click: action(preferences.forwardClick),
-                    hold: .init(
-                        enabled: preferences.forwardHoldEnabled,
-                        shortcut: preferences.shortcut.map(ConfigAction.shortcut) ?? .keyword(.none),
-                        delayMs: preferences.holdMilliseconds)),
-                gesture: .init(
-                    enabled: preferences.thumbGesturesEnabled,
-                    sensitivityPercent: percent(preferences.thumbSensitivity),
-                    click: gesture(.click), up: gesture(.up), down: gesture(.down), left: gesture(.left),
-                    right: gesture(.right)),
-                top: .init(
-                    enabled: preferences.topZoomEnabled, click: topClick,
-                    zoomSpeedPercent: percent(preferences.zoomSensitivity)),
-                wheel: .init(
-                    enabled: preferences.wheelEnabled, speedPercent: percent(preferences.wheelSpeed),
-                    accelerationPercent: percent(preferences.wheelAcceleration),
-                    natural: preferences.wheelNatural, mode: preferences.wheelMode),
-                thumbWheel: .init(direction: preferences.horizontalDirection)))
+            testMode: preferences.testMode, buttons: buttons,
+            wheel: .init(
+                enabled: preferences.wheelEnabled, speedPercent: percent(preferences.wheelSpeed),
+                accelerationPercent: percent(preferences.wheelAcceleration),
+                natural: preferences.wheelNatural,
+                mode: preferences.wheelMode),
+            thumbWheel: .init(direction: preferences.horizontalDirection))
     }
 
     static func encode(_ preferences: Preferences) -> String {
@@ -268,13 +273,13 @@ enum ConfigJSON {
         return write(object, indent: "") + "\n"
     }
 
-    private static let keyOrder = [
-        "testMode", "buttons", "forward", "back", "gesture", "top", "wheel", "thumbWheel", "enabled", "click",
-        "hold", "shortcut", "delayMs", "up", "down", "left", "right", "sensitivityPercent",
-        "zoomSpeedPercent",
-        "speedPercent", "accelerationPercent", "natural", "mode", "direction", "keyCode", "modifiers",
-        "label",
-    ]
+    private static let keyOrder =
+        ["testMode", "buttons"] + ConfigDocument.Buttons.names.map(\.0) + [
+            "wheel", "thumbWheel", "enabled", "click", "hold", "up", "down", "left", "right", "holdDelayMs",
+            "dragSensitivityPercent", "zoomSpeedPercent", "speedPercent", "accelerationPercent", "natural",
+            "mode",
+            "direction", "keyCode", "modifiers", "label",
+        ]
 
     /// Pretty-prints with keys in `keyOrder`, since JSONEncoder's key order isn't stable.
     private static func write(_ value: Any, indent: String) -> String {
@@ -310,62 +315,38 @@ enum ConfigJSON {
         }
         var result = base
         if let testMode = document.testMode { result.testMode = testMode }
-        guard let buttons = document.buttons else { return result.normalized() }
-
-        if let back = buttons.back {
-            if let enabled = back.enabled { result.backEnabled = enabled }
-            if let click = back.click { result.backClick = try mapping(click, at: "buttons.back.click") }
-        }
-        if let forward = buttons.forward {
-            if let enabled = forward.enabled { result.forwardEnabled = enabled }
-            if let click = forward.click {
-                result.forwardClick = try mapping(click, at: "buttons.forward.click")
-            }
-            if let hold = forward.hold {
-                if let enabled = hold.enabled { result.forwardHoldEnabled = enabled }
-                if let delay = hold.delayMs { result.holdMilliseconds = delay }
-                switch hold.shortcut {
-                case nil: break
-                case .keyword(.none): result.shortcut = nil
-                case .shortcut(let shortcut): result.shortcut = shortcut
-                case .keyword(let other):
-                    throw ConfigError(
-                        message:
-                            "buttons.forward.hold.shortcut: \"\(other.rawValue)\" is not allowed. Use \"none\" or a shortcut like \"cmd+shift+t\"."
-                    )
+        for (name, control) in ConfigDocument.Buttons.names {
+            guard let button = document.buttons?[control] else { continue }
+            let current = base.buttons[control]
+            var mapping = current
+            if let enabled = button.enabled { mapping.enabled = enabled }
+            for slot in ButtonSlot.allCases {
+                guard let value = button[slot] else { continue }
+                let action: ButtonAction
+                switch value {
+                case .default: action = ButtonMapping.defaults(for: control)[slot]
+                case .action(let chosen): action = chosen
                 }
+                guard ButtonAction.Kind.choices(for: slot).contains(action.kind) else {
+                    throw ConfigError(
+                        message: "buttons.\(name).\(slot.rawValue): \"zoom\" only works for up and down.")
+                }
+                mapping[slot] = action
             }
+            guard (mapping.up.kind == .zoom) == (mapping.down.kind == .zoom) else {
+                throw ConfigError(
+                    message: "buttons.\(name): zoom uses both up and down, so set both to \"zoom\".")
+            }
+            if let delay = button.holdDelayMs { mapping.holdMilliseconds = delay }
+            if let sensitivity = button.dragSensitivityPercent {
+                mapping.dragSensitivity = scaled(sensitivity, keeping: current.dragSensitivity)
+            }
+            if let speed = button.zoomSpeedPercent {
+                mapping.zoomSpeed = scaled(speed, keeping: current.zoomSpeed)
+            }
+            result.buttons[control] = mapping
         }
-        if let gesture = buttons.gesture {
-            if let enabled = gesture.enabled { result.thumbGesturesEnabled = enabled }
-            if let sensitivity = gesture.sensitivityPercent {
-                result.thumbSensitivity = scaled(sensitivity, keeping: base.thumbSensitivity)
-            }
-            let directions: [(ThumbGestureInterpreter.Action, ConfigAction?)] = [
-                (.click, gesture.click), (.up, gesture.up), (.down, gesture.down), (.left, gesture.left),
-                (.right, gesture.right),
-            ]
-            for (action, value) in directions {
-                guard let value else { continue }
-                let next = try mapping(value, at: "buttons.gesture.\(action.rawValue)")
-                result.thumbShortcuts[action.rawValue] = next == ShortcutMapping() ? nil : next
-            }
-        }
-        if let top = buttons.top {
-            if let enabled = top.enabled { result.topZoomEnabled = enabled }
-            if let speed = top.zoomSpeedPercent {
-                result.zoomSensitivity = scaled(speed, keeping: base.zoomSensitivity)
-            }
-            switch top.click {
-            case nil: break
-            case .keyword(.smartZoom), .keyword(.default): result.topClickAction = .smartZoom
-            case .keyword(.none): result.topClickAction = .none
-            case .shortcut(let shortcut):
-                result.topClickAction = .shortcut
-                result.topClickShortcut = shortcut
-            }
-        }
-        if let wheel = buttons.wheel {
+        if let wheel = document.wheel {
             if let enabled = wheel.enabled { result.wheelEnabled = enabled }
             if let speed = wheel.speedPercent { result.wheelSpeed = scaled(speed, keeping: base.wheelSpeed) }
             if let acceleration = wheel.accelerationPercent {
@@ -374,21 +355,8 @@ enum ConfigJSON {
             if let natural = wheel.natural { result.wheelNatural = natural }
             if let mode = wheel.mode { result.wheelMode = mode }
         }
-        if let direction = buttons.thumbWheel?.direction { result.horizontalDirection = direction }
+        if let direction = document.thumbWheel?.direction { result.horizontalDirection = direction }
         return result.normalized()
-    }
-
-    private static func mapping(_ action: ConfigAction, at path: String) throws -> ShortcutMapping {
-        switch action {
-        case .keyword(.default): return ShortcutMapping()
-        case .keyword(.none): return ShortcutMapping(source: .none)
-        case .shortcut(let shortcut): return ShortcutMapping(source: .custom, shortcut: shortcut)
-        case .keyword(.smartZoom):
-            throw ConfigError(
-                message:
-                    "\(path): \"smartZoom\" is not allowed. Use \"default\", \"none\", or a shortcut like \"cmd+]\"."
-            )
-        }
     }
 
     private static func percent(_ value: Double) -> Double { (value * 100).rounded() }

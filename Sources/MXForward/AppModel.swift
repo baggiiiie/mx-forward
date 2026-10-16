@@ -29,12 +29,11 @@ final class AppModel: ObservableObject {
     private var configModified: Date?
     private var configTask: Task<Void, Never>?
     private let mouse: BoltMouse
-    private var sideButtons = SideButtonInterpreter()
-    private var zoom = ZoomInterpreter()
     private var wheel = WheelInterpreter()
-    private var thumb = ThumbGestureInterpreter()
-    private var movementButtons = MovementButtons()
-    private var zoomAnchor = CGPoint.zero
+    /// Gestures for buttons that are currently held.
+    private var gestures: [MouseControl: ButtonGesture] = [:]
+    private var holdTasks: [MouseControl: Task<Void, Never>] = [:]
+    private var actionAnchor = CGPoint.zero
     private var zoomTestWindow: ZoomTestWindow?
     private var appliedConfiguration: MouseConfiguration?
     private var settingsTask: Task<Void, Never>?
@@ -49,7 +48,6 @@ final class AppModel: ObservableObject {
     private var operationEpoch = 0
     private var sleeping = false
     private var quitting = false
-    private var holdTask: Task<Void, Never>?
     private var monitorTask: Task<Void, Never>?
     private var wakeObservers: [NSObjectProtocol] = []
 
@@ -64,13 +62,10 @@ final class AppModel: ObservableObject {
         mouse.onLog = { [weak self] in self?.append($0) }
         mouse.onPress = { [weak self] control, down in self?.physicalPress(control, down: down) }
         mouse.onMovement = { [weak self] dx, dy in
-            guard let self, self.enabled, !self.recordingShortcut else { return }
-            switch self.movementButtons.active {
-            case .top: self.performZoom(self.zoom.move(dx: dx, dy: dy))
-            case .thumb:
-                if let action = self.thumb.move(dx: dx, dy: dy) { self.performThumb(action) }
-            default: break
-            }
+            guard let self, self.enabled, !self.recordingShortcut,
+                let control = self.gestures.keys.first(where: self.reportsMovement)
+            else { return }
+            self.perform(self.gestures[control]?.move(dx: dx, dy: dy) ?? [], from: control)
         }
         mouse.onScroll = { [weak self] scroll, multiplier in
             guard let self, self.enabled, self.preferences.wheelEnabled else { return }
@@ -342,8 +337,8 @@ final class AppModel: ObservableObject {
         let configuration = preferences.hardwareConfiguration
         do {
             try await mouse.claim(
-                configuration.controls, wheelMode: configuration.wheelMode,
-                horizontalInverted: configuration.horizontalInverted)
+                configuration.controls, movement: configuration.movementControls,
+                wheelMode: configuration.wheelMode, horizontalInverted: configuration.horizontalInverted)
             guard epoch == operationEpoch else {
                 try await mouse.release()
                 return
@@ -399,17 +394,23 @@ final class AppModel: ObservableObject {
 
     private func cancelInput(testMode: Bool? = nil) {
         suppressedControls.formUnion(heldControls)
-        performZoom(zoom.cancel(), testMode: testMode)
+        for control in Array(gestures.keys) {
+            perform(gestures[control]?.cancel() ?? [], from: control, testMode: testMode)
+        }
+        gestures.removeAll()
+        for task in holdTasks.values { task.cancel() }
+        holdTasks.removeAll()
         wheel.cancel()
-        thumb.cancel()
-        movementButtons.cancel()
-        holdTask?.cancel()
-        holdTask = nil
-        sideButtons.cancel()
+    }
+
+    private func reportsMovement(_ control: MouseControl) -> Bool {
+        appliedConfiguration?.movementControls.contains(control) ?? false
     }
 
     private func physicalPress(_ control: MouseControl, down: Bool) {
-        if down { heldControls.insert(control) } else { heldControls.remove(control) }
+        if down != heldControls.contains(control) {
+            if down { heldControls.insert(control) } else { heldControls.remove(control) }
+        }
         if suppressedControls.contains(control) {
             if !down { suppressedControls.remove(control) }
             return
@@ -418,132 +419,80 @@ final class AppModel: ObservableObject {
             if down { suppressedControls.insert(control) }
             return
         }
-        if control.reportsMovement {
-            movementPress(control, down: down)
+        // Every button report repeats the state of all held buttons.
+        guard down != (gestures[control] != nil) else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard down else {
+            holdTasks.removeValue(forKey: control)?.cancel()
+            let events = gestures[control]?.up(at: now) ?? []
+            gestures[control] = nil
+            perform(events, from: control)
             return
         }
-        guard down != sideButtons.isPressed(control) else { return }
-        if let action = sideButtons.update(
-            control, down: down, at: ProcessInfo.processInfo.systemUptime,
-            holdThreshold: preferences.forwardHoldEnabled ? preferences.holdMilliseconds / 1000 : nil)
-        {
-            perform(action)
-        }
-        if down { lastAction = "\(control.name) pressed…" }
-        guard control == .forward else { return }
-        if down && preferences.forwardHoldEnabled {
-            let delay = preferences.holdMilliseconds
-            holdTask = Task { [weak self] in
-                do { try await Task.sleep(for: .milliseconds(delay)) } catch { return }
-                guard let self, self.enabled else { return }
-                if let action = self.sideButtons.advance(to: ProcessInfo.processInfo.systemUptime) {
-                    self.perform(action)
-                }
-            }
-        } else {
-            holdTask?.cancel()
-            holdTask = nil
-        }
-    }
-
-    private func movementPress(_ control: MouseControl, down: Bool) {
-        guard let transition = movementButtons.update(control, down: down) else { return }
-        switch transition {
-        case .begin(let button):
-            let discardFirst = mouse.connection?.discardFirstMovement ?? false
-            if button == .top {
-                zoomAnchor = CGEvent(source: nil)?.location ?? .zero
-                zoom.down(sensitivity: preferences.zoomSensitivity, discardFirstReport: discardFirst)
-            } else {
-                thumb.down(sensitivity: preferences.thumbSensitivity, discardFirstReport: discardFirst)
-            }
-            lastAction = "\(button.name) pressed…"
-        case .finish(let button):
-            if button == .top {
-                performZoom(zoom.up())
-            } else if let action = thumb.up() {
-                performThumb(action)
-            }
-        case .cancel:
-            performZoom(zoom.cancel())
-            thumb.cancel()
-            append("Gesture cancelled: both gesture buttons were pressed")
-        }
-    }
-
-    private func performThumb(_ action: ThumbGestureInterpreter.Action) {
-        let shortcut = preferences.thumbShortcut(action)
-        lastAction =
-            (preferences.testMode ? "Test: " : "")
-            + "Thumb \(action.rawValue) → \(shortcut?.label ?? "No action")"
-        append(lastAction)
-        guard !preferences.testMode, let shortcut else { return }
-        if !KeyboardOutput.send(shortcut) {
-            status = "Thumb shortcut could not be sent. Check Accessibility."
-        }
-    }
-
-    private func perform(_ action: SideButtonInterpreter.Action) {
-        let label: String
-        let shortcut: Shortcut?
-        switch action {
-        case .back:
-            shortcut = preferences.backClick.resolve(default: .back)
-            label = "Back click → \(shortcut?.label ?? "No action")"
-        case .forward:
-            shortcut = preferences.forwardClick.resolve(default: .forward)
-            label = "Forward click → \(shortcut?.label ?? "No action")"
-        case .shortcut:
-            label = "Hold → \(preferences.shortcut?.label ?? "shortcut not set")"
-            shortcut = preferences.shortcut
-        }
-        lastAction = (preferences.testMode ? "Test: " : "") + label
-        append(lastAction)
-        guard !preferences.testMode, let shortcut else { return }
-        guard KeyboardOutput.send(shortcut)
-        else {
-            status = "Shortcut could not be sent. Check Accessibility."
+        // Movement reports don't say which button is held, so two dragging buttons can't share them.
+        if reportsMovement(control), let other = gestures.keys.first(where: reportsMovement) {
+            holdTasks.removeValue(forKey: other)?.cancel()
+            let events = gestures[other]?.cancel() ?? []
+            gestures[other] = nil
+            perform(events, from: other)
+            suppressedControls.formUnion([control, other])
+            append("Cancelled: \(other.name) and \(control.name) were held together")
             return
         }
-    }
-
-    private func performZoom(_ actions: [ZoomAction], testMode: Bool? = nil) {
-        for action in actions {
-            switch action {
-            case .click:
-                performTopClick()
-                continue
-            case .begin:
-                lastAction = "Top + vertical movement → Zoom"
-                append("Zoom began")
-            case .magnify(let amount):
-                lastAction = amount > 0 ? "Top + move up → Zoom in" : "Top + move down → Zoom out"
-            case .end, .cancel:
-                append(action == .end ? "Zoom ended" : "Zoom cancelled")
-            }
-            if testMode ?? preferences.testMode { continue }
-            if !ZoomOutput.send(action, at: zoomAnchor) {
-                status = "Zoom could not be sent. Check Accessibility."
+        let mapping = preferences.buttons[control]
+        let options = ButtonGesture.Options(
+            holdDelay: mapping.hold.isNone ? nil : mapping.holdMilliseconds / 1000,
+            dragDistance: 120 / mapping.dragSensitivity, verticalZoom: mapping.verticalZoom,
+            zoomSpeed: mapping.zoomSpeed, discardFirstReport: mouse.connection?.discardFirstMovement ?? false)
+        var gesture = ButtonGesture()
+        gesture.down(at: now, options: options)
+        gestures[control] = gesture
+        actionAnchor = CGEvent(source: nil)?.location ?? .zero
+        lastAction = "\(control.name) pressed…"
+        if let delay = options.holdDelay {
+            holdTasks[control] = Task { [weak self] in
+                do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+                guard let self, self.enabled,
+                    let event = self.gestures[control]?.advance(to: ProcessInfo.processInfo.systemUptime)
+                else { return }
+                self.perform([event], from: control)
             }
         }
     }
 
-    private func performTopClick() {
-        let action = preferences.topClickAction
-        let label =
-            action == .shortcut
-            ? preferences.topClickShortcut?.label ?? "shortcut not set" : action.label
-        lastAction = (preferences.testMode ? "Test: " : "") + "Top click → \(label)"
+    private func perform(_ events: [ButtonGesture.Event], from control: MouseControl, testMode: Bool? = nil) {
+        let testMode = testMode ?? preferences.testMode
+        for event in events {
+            switch event {
+            case .action(let slot): perform(slot, of: control, testMode: testMode)
+            case .zoom(let zoom): perform(zoom, from: control, testMode: testMode)
+            }
+        }
+    }
+
+    private func perform(_ slot: ButtonSlot, of control: MouseControl, testMode: Bool) {
+        let action = preferences.buttons[control][slot]
+        lastAction = (testMode ? "Test: " : "") + "\(control.name) \(slot.rawValue) → \(action.label)"
         append(lastAction)
-        guard !preferences.testMode else { return }
-        let sent: Bool
-        switch action {
-        case .smartZoom: sent = ZoomOutput.send(.click, at: zoomAnchor)
-        case .shortcut:
-            sent = preferences.topClickShortcut.map(KeyboardOutput.send) ?? false
-        case .none: return
+        guard !testMode, !action.isNone else { return }
+        if !ActionOutput.send(action, at: actionAnchor) {
+            status = "\(control.name) action could not be sent. Check Accessibility."
         }
-        if !sent { status = "Top-button action could not be sent. Check Accessibility." }
+    }
+
+    private func perform(_ zoom: ZoomAction, from control: MouseControl, testMode: Bool) {
+        switch zoom {
+        case .begin:
+            lastAction = "\(control.name) drag → Zoom"
+            append("Zoom began")
+        case .magnify(let amount):
+            lastAction = "\(control.name) drag \(amount > 0 ? "up → Zoom in" : "down → Zoom out")"
+        case .end, .cancel: append(zoom == .end ? "Zoom ended" : "Zoom cancelled")
+        case .click: break
+        }
+        if !testMode && !ZoomOutput.send(zoom, at: actionAnchor) {
+            status = "Zoom could not be sent. Check Accessibility."
+        }
     }
 
     func showZoomTest() {

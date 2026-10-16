@@ -2,13 +2,14 @@ import ForwardCore
 import SwiftUI
 
 enum MouseButton: String, CaseIterable, Identifiable {
-    case wheel, top, thumbWheel, forward, back, gesture
+    case wheel, wheelButton, top, thumbWheel, forward, back, gesture
 
     var id: Self { self }
 
     var title: String {
         switch self {
         case .wheel: return "Main wheel"
+        case .wheelButton: return "Wheel button"
         case .top: return "Top button"
         case .thumbWheel: return "Thumb wheel"
         case .forward: return "Forward"
@@ -20,6 +21,7 @@ enum MouseButton: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .wheel: return "arrow.up.and.down"
+        case .wheelButton: return "smallcircle.filled.circle"
         case .top: return "plus.magnifyingglass"
         case .thumbWheel: return "arrow.left.and.right"
         case .forward: return "arrow.right"
@@ -30,6 +32,7 @@ enum MouseButton: String, CaseIterable, Identifiable {
 
     var control: MouseControl? {
         switch self {
+        case .wheelButton: return .middle
         case .top: return .top
         case .forward: return .forward
         case .back: return .back
@@ -38,9 +41,13 @@ enum MouseButton: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Pressing the wheel is drawn on the wheel itself.
+    fileprivate var drawnOn: MouseButton { self == .wheelButton ? .wheel : self }
+
     /// Position and size relative to the mouse body (0–1), rotation, and corner roundness.
     fileprivate var hotspot: (center: CGPoint, size: CGSize, degrees: Double, roundness: CGFloat) {
         switch self {
+        case .wheelButton: return (CGPoint(x: 0.575, y: 0.23), .zero, 0, 0)
         case .wheel: return (CGPoint(x: 0.575, y: 0.175), CGSize(width: 0.085, height: 0.16), 0, 0.5)
         case .top: return (CGPoint(x: 0.585, y: 0.315), CGSize(width: 0.075, height: 0.045), 0, 0.4)
         case .thumbWheel: return (CGPoint(x: 0.215, y: 0.33), CGSize(width: 0.06, height: 0.13), -18, 0.5)
@@ -52,7 +59,7 @@ enum MouseButton: String, CaseIterable, Identifiable {
 
     fileprivate var labelOnLeft: Bool {
         switch self {
-        case .wheel, .top: return false
+        case .wheel, .wheelButton, .top: return false
         case .thumbWheel, .forward, .back, .gesture: return true
         }
     }
@@ -81,7 +88,7 @@ struct MouseIllustration: View {
             let index = CGFloat(MouseButton.allCases.filter(\.labelOnLeft).firstIndex(of: button) ?? 0)
             return CGPoint(x: 10 + labelWidth / 2, y: 140 + index * 80)
         }
-        let y: CGFloat = button == .wheel ? 64 : 180
+        let y: CGFloat = button == .wheel ? 64 : button == .wheelButton ? 122 : 180
         return CGPoint(x: Self.stageSize.width - 10 - labelWidth / 2, y: y)
     }
 
@@ -99,7 +106,7 @@ struct MouseIllustration: View {
                 .position(x: mouseRect.midX + 10, y: mouseRect.maxY - 8)
             mouseBody
             leaders
-            ForEach(MouseButton.allCases) { button in hotspot(button) }
+            ForEach(MouseButton.allCases.filter { $0.drawnOn == $0 }) { button in hotspot(button) }
             ForEach(MouseButton.allCases) { button in label(button) }
         }
         .frame(width: Self.stageSize.width, height: Self.stageSize.height, alignment: .topLeading)
@@ -160,13 +167,14 @@ struct MouseIllustration: View {
             width: spot.size.width * mouseRect.width, height: spot.size.height * mouseRect.height)
         let shape = RoundedRectangle(
             cornerRadius: min(size.width, size.height) * spot.roundness, style: .continuous)
-        let selected = button == selection
-        let isPressed = pressed.contains(button)
+        let selected = selection.drawnOn == button
+        let isPressed = pressed.contains { $0.drawnOn == button }
         let fill: Color =
             isPressed
             ? .green
             : selected
-                ? .accentColor : button == hovered ? Color.accentColor.opacity(0.55) : Color(white: 0.38)
+                ? .accentColor
+                : hovered?.drawnOn == button ? Color.accentColor.opacity(0.55) : Color(white: 0.38)
         return
             shape
             .fill(fill.gradient)

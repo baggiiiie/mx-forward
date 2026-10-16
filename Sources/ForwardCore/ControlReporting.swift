@@ -17,10 +17,10 @@ public struct ControlReporting: Equatable {
 
     public var temporarilyDiverted: Bool { diverted && !persistent }
 
-    public func parameters(divert: Bool) -> [UInt8] {
+    public func parameters(divert: Bool, rawMovement: Bool = false) -> [UInt8] {
         var flags: UInt8 = divert ? 0x0B : 0x0A
-        // Gesture buttons need movement reports; release clears them.
-        flags |= control.reportsMovement && divert ? 0x30 : 0x20
+        // Release always clears movement reports.
+        flags |= rawMovement && divert ? 0x30 : 0x20
         return control.query + [flags, UInt8(remap >> 8), UInt8(remap & 255)]
     }
 }

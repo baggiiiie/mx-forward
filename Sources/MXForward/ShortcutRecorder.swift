@@ -1,37 +1,6 @@
 import AppKit
 import SwiftUI
 
-struct ShortcutMappingRow: View {
-    var title: String
-    @Binding var mapping: ShortcutMapping
-    var defaultShortcut: Shortcut?
-    var resetHelp: String
-    var onRecordingChanged: (Bool) -> Void
-
-    var body: some View {
-        HStack {
-            Text(title).frame(width: 100, alignment: .leading)
-            ShortcutRecorder(
-                shortcut: Binding(
-                    get: { mapping.resolve(default: defaultShortcut) },
-                    set: { mapping = ShortcutMapping(source: $0 == nil ? .none : .custom, shortcut: $0) }),
-                accessibilityLabel: "\(title) keyboard shortcut",
-                onRecordingChanged: onRecordingChanged
-            ).frame(height: 32)
-            if mapping.resolve(default: defaultShortcut) != nil {
-                Button("Clear") { mapping = ShortcutMapping(source: .none) }
-            }
-            if mapping.source != .defaultShortcut {
-                Button {
-                    mapping = ShortcutMapping()
-                } label: {
-                    Image(systemName: "arrow.counterclockwise")
-                }.help(resetHelp).accessibilityLabel(resetHelp)
-            }
-        }
-    }
-}
-
 struct ShortcutRecorder: NSViewRepresentable {
     @Binding var shortcut: Shortcut?
     var accessibilityLabel = "Hold keyboard shortcut"

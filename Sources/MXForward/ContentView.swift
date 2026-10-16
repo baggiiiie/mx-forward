@@ -249,7 +249,7 @@ struct TimingPad: NSViewRepresentable {
 final class TimingPadView: NSView {
     var delay = 400.0
     var onResult: (String) -> Void = { _ in }
-    private var machine = PressInterpreter()
+    private var gesture = ButtonGesture()
     private var timer: Timer?
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -271,14 +271,14 @@ final class TimingPadView: NSView {
             withAttributes: style)
     }
     override func mouseDown(with event: NSEvent) {
-        machine.cancel()
+        _ = gesture.cancel()
         timer?.invalidate()
-        machine.down(at: ProcessInfo.processInfo.systemUptime, threshold: delay / 1000)
+        gesture.down(at: ProcessInfo.processInfo.systemUptime, options: .init(holdDelay: delay / 1000))
         onResult("Pressed…")
         let next = Timer(timeInterval: delay / 1000, repeats: false) { [weak self] _ in
             guard let self else { return }
-            if let action = self.machine.advance(to: ProcessInfo.processInfo.systemUptime) {
-                self.show(action)
+            if let event = self.gesture.advance(to: ProcessInfo.processInfo.systemUptime) {
+                self.show([event])
             }
         }
         timer = next
@@ -287,18 +287,19 @@ final class TimingPadView: NSView {
     override func mouseUp(with event: NSEvent) {
         timer?.invalidate()
         timer = nil
-        if let action = machine.up(at: ProcessInfo.processInfo.systemUptime) { show(action) }
+        show(gesture.up(at: ProcessInfo.processInfo.systemUptime))
     }
-    private func show(_ action: PressInterpreter.Action) {
-        onResult(
-            action == .forward
-                ? "Click detected (preview only)"
-                : "Hold detected → shortcut once; no Forward (preview only)")
+    private func show(_ events: [ButtonGesture.Event]) {
+        switch events.first {
+        case .action(.click): onResult("Click detected")
+        case .action(.hold): onResult("Hold detected · the click won’t fire")
+        default: break
+        }
     }
     override func viewDidMoveToWindow() {
         if window == nil {
             timer?.invalidate()
-            machine.cancel()
+            _ = gesture.cancel()
         }
     }
 }

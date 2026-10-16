@@ -2,31 +2,23 @@ import AppKit
 import ForwardCore
 
 enum WindowNavigationOutput {
-    static func label(_ action: ThumbGestureInterpreter.Action) -> String {
-        switch action {
-        case .click, .up: return "Mission Control"
-        case .down: return "App Exposé"
-        case .left: return "Desktop left"
-        case .right: return "Desktop right"
-        }
-    }
-
-    static func currentShortcut(_ action: ThumbGestureInterpreter.Action) -> Shortcut? {
+    static func currentShortcut(_ action: ButtonAction.Kind) -> Shortcut? {
         let hotkeys = UserDefaults(suiteName: "com.apple.symbolichotkeys")?
             .dictionary(forKey: "AppleSymbolicHotKeys")
         return shortcut(action, hotkeys: hotkeys)
     }
 
     static func shortcut(
-        _ action: ThumbGestureInterpreter.Action, hotkeys: [String: Any]?
+        _ action: ButtonAction.Kind, hotkeys: [String: Any]?
     ) -> Shortcut? {
         let id: String
         let defaultKey: UInt16
         switch action {
-        case .click, .up: (id, defaultKey) = ("32", 126)
-        case .down: (id, defaultKey) = ("33", 125)
-        case .left: (id, defaultKey) = ("79", 123)
-        case .right: (id, defaultKey) = ("81", 124)
+        case .missionControl: (id, defaultKey) = ("32", 126)
+        case .appExpose: (id, defaultKey) = ("33", 125)
+        case .desktopLeft: (id, defaultKey) = ("79", 123)
+        case .desktopRight: (id, defaultKey) = ("81", 124)
+        default: return nil
         }
         let entry = hotkeys?[id] as? [String: Any]
         guard entry?["enabled"] as? Bool != false else { return nil }

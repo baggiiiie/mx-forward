@@ -140,25 +140,29 @@ private struct ConfigReference: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 Text("Reference").font(.headline)
+                entry("Buttons", "forward  back  gesture  top\nwheelButton")
+                entry("Each button", "click  hold  up  down  left  right")
                 entry(
-                    "Button actions",
+                    "Actions",
                     """
-                    "default"  built-in action
-                    "none"     do nothing
                     "cmd+shift+t"  a shortcut
-                    "smartZoom"  top click only
+                    "none"  "default"
+                    "missionControl"  "appExpose"
+                    "desktopLeft"  "desktopRight"
+                    "smartZoom"  "middleClick"
+                    "zoom"  up and down only
                     """)
                 entry("Modifiers", "cmd  opt  ctrl  shift  fn\nSymbols also work: \"⌘⇧T\"")
                 entry(
                     "Keys",
                     "a–z  0–9  - = [ ] ; ' , . / \\ `\nreturn tab space delete escape\nleft right up down home end\npageup pagedown f1–f20"
                 )
-                entry("Gesture keys", "click  up  down  left  right")
                 entry("wheel.mode", "unchanged  ratchet  freeSpin")
                 entry("thumbWheel.direction", "unchanged  standard  reversed")
                 entry(
                     "Percentages",
-                    "speedPercent, zoomSpeedPercent, sensitivityPercent, accelerationPercent use 100 = 100%.")
+                    "speedPercent, accelerationPercent, dragSensitivityPercent, zoomSpeedPercent use 100 = 100%."
+                )
                 Text(
                     "Any key can be left out to keep its current value. Edits saved to the file from another editor apply within a second. Key names use US-layout positions."
                 )

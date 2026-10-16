@@ -34,32 +34,28 @@ struct MouseConfigurator: View {
     }
 
     static func enabled(_ p: Preferences) -> [MouseButton: Bool] {
-        [
-            .wheel: p.wheelEnabled, .top: p.topZoomEnabled, .forward: p.forwardEnabled,
-            .back: p.backEnabled, .gesture: p.thumbGesturesEnabled, .thumbWheel: true,
-        ]
+        var enabled: [MouseButton: Bool] = [.wheel: p.wheelEnabled]
+        for button in MouseButton.allCases {
+            if let control = button.control { enabled[button] = p.buttons[control].enabled }
+        }
+        return enabled
     }
 
     static func summaries(_ p: Preferences) -> [MouseButton: String] {
-        func label(_ shortcut: Shortcut?) -> String { shortcut?.label ?? "No action" }
-        let gestures = ThumbGestureInterpreter.Action.allCases
-        let customGestures = gestures.filter {
-            (p.thumbShortcuts[$0.rawValue]?.source ?? .defaultShortcut) != .defaultShortcut
-        }
-        let top =
-            p.topClickAction == .shortcut
-            ? p.topClickShortcut?.label ?? "Shortcut not set" : p.topClickAction.label
-        return [
+        var summaries: [MouseButton: String] = [
             .wheel:
-                "\(Int((p.wheelSpeed * 100).rounded()))% · \(p.wheelMode == .unchanged ? (p.wheelNatural ? "Natural" : "Standard") : p.wheelMode.label)",
-            .top: top,
+                "\(ButtonInspector.percent(p.wheelSpeed)) · \(p.wheelMode == .unchanged ? (p.wheelNatural ? "Natural" : "Standard") : p.wheelMode.label)",
             .thumbWheel: p.horizontalDirection == .unchanged
                 ? "Native direction" : p.horizontalDirection.label,
-            .forward: label(p.forwardClick.resolve(default: .forward))
-                + (p.forwardHoldEnabled ? p.shortcut.map { " · hold \($0.label)" } ?? "" : ""),
-            .back: label(p.backClick.resolve(default: .back)),
-            .gesture: customGestures.isEmpty ? "Mission Control" : "\(customGestures.count) custom gestures",
         ]
+        for button in MouseButton.allCases {
+            guard let control = button.control else { continue }
+            let mapping = p.buttons[control]
+            let others = ButtonSlot.allCases.filter { $0 != .click && !mapping[$0].isNone }
+            let more = mapping.verticalZoom ? others.count - 1 : others.count
+            summaries[button] = mapping.click.label + (more > 0 ? " +\(more)" : "")
+        }
+        return summaries
     }
 }
 
@@ -98,165 +94,21 @@ struct ButtonInspector: View {
     private var subtitle: String {
         switch button {
         case .wheel: return "Speed, acceleration, and ratchet feel"
+        case .wheelButton: return "Press the main wheel"
         case .top: return "The button behind the wheel"
         case .thumbWheel: return "Horizontal scrolling under your thumb"
         case .forward: return "Front side button"
         case .back: return "Rear side button"
-        case .gesture: return "Under your thumb · press or hold and move"
+        case .gesture: return "Under your thumb"
         }
     }
 
     @ViewBuilder private var content: some View {
         switch button {
-        case .forward: forward
-        case .back: back
-        case .gesture: gesture
-        case .top: top
         case .wheel: wheel
         case .thumbWheel: thumbWheel
+        default: if let control = button.control { ClickableButtonForm(control: control, inspector: self) }
         }
-    }
-
-    private func mappingRow(
-        _ title: String, _ mapping: Binding<ShortcutMapping>, default shortcut: Shortcut?, resetHelp: String
-    ) -> some View {
-        ShortcutMappingRow(
-            title: title, mapping: mapping, defaultShortcut: shortcut, resetHelp: resetHelp,
-            onRecordingChanged: onRecordingChanged)
-    }
-
-    @ViewBuilder private var forward: some View {
-        Section {
-            Toggle("Use Forward button", isOn: $preferences.forwardEnabled)
-        }
-        Section {
-            mappingRow(
-                "Click", $preferences.forwardClick, default: .forward, resetHelp: "Restore Forward (⌘])")
-        } header: {
-            Text("Click")
-        } footer: {
-            Text("Click the shortcut, then press your keys. Fires on release.").inspectorFootnote()
-        }
-        .disabled(!preferences.forwardEnabled)
-        Section {
-            Toggle("Send a shortcut when held", isOn: $preferences.forwardHoldEnabled)
-            if preferences.forwardHoldEnabled {
-                LabeledContent("Shortcut") {
-                    HStack {
-                        ShortcutRecorder(
-                            shortcut: $preferences.shortcut, onRecordingChanged: onRecordingChanged
-                        )
-                        .frame(height: 28)
-                        if preferences.shortcut != nil {
-                            Button("Clear") { preferences.shortcut = nil }
-                        }
-                    }
-                }
-                ValueSlider(
-                    title: "Hold delay", value: $preferences.holdMilliseconds, range: 150...1500, step: 50,
-                    accessibility: "Hold delay in milliseconds"
-                ) { "\(Int($0)) ms" }
-                VStack(alignment: .leading, spacing: 6) {
-                    TimingPad(delay: preferences.holdMilliseconds, result: $testResult).frame(height: 40)
-                    Text(testResult).font(.caption).foregroundStyle(.secondary)
-                }
-            }
-        } header: {
-            Text("Hold")
-        } footer: {
-            Text("A hold sends the shortcut once, without also going Forward.").inspectorFootnote()
-        }
-        .disabled(!preferences.forwardEnabled)
-    }
-
-    @ViewBuilder private var back: some View {
-        Section {
-            Toggle("Use Back button", isOn: $preferences.backEnabled)
-        }
-        Section {
-            mappingRow("Click", $preferences.backClick, default: .back, resetHelp: "Restore Back (⌘[)")
-        } header: {
-            Text("Click")
-        } footer: {
-            Text(
-                "Click the shortcut, then press your keys. Clear disables the button; the arrow restores ⌘[."
-            )
-            .inspectorFootnote()
-        }
-        .disabled(!preferences.backEnabled)
-    }
-
-    @ViewBuilder private var gesture: some View {
-        Section {
-            Toggle("Use gesture button", isOn: $preferences.thumbGesturesEnabled)
-        }
-        Section {
-            ForEach(ThumbGestureInterpreter.Action.allCases, id: \.self) { action in
-                mappingRow(
-                    action == .click ? "Click" : "Hold + \(action.rawValue)",
-                    Binding(
-                        get: { preferences.thumbShortcuts[action.rawValue] ?? ShortcutMapping() },
-                        set: { preferences.thumbShortcuts[action.rawValue] = $0 }),
-                    default: WindowNavigationOutput.currentShortcut(action),
-                    resetHelp: "Use macOS \(WindowNavigationOutput.label(action)) shortcut")
-            }
-        } header: {
-            Text("Actions")
-        } footer: {
-            Text(
-                "Defaults follow macOS: click and up open Mission Control, down opens App Exposé, left and right switch desktops. Each press performs one action."
-            ).inspectorFootnote()
-        }
-        .disabled(!preferences.thumbGesturesEnabled)
-        Section {
-            ValueSlider(
-                title: "Sensitivity", value: $preferences.thumbSensitivity, range: 0.25...3, step: 0.05,
-                accessibility: "Thumb gesture sensitivity", format: Self.percent)
-        }
-        .disabled(!preferences.thumbGesturesEnabled)
-    }
-
-    @ViewBuilder private var top: some View {
-        Section {
-            Toggle("Use top button", isOn: $preferences.topZoomEnabled)
-        }
-        Section {
-            Picker("Action", selection: $preferences.topClickAction) {
-                ForEach(TopClickAction.allCases) { action in Text(action.label).tag(action) }
-            }
-            if preferences.topClickAction == .shortcut {
-                LabeledContent("Shortcut") {
-                    HStack {
-                        ShortcutRecorder(
-                            shortcut: $preferences.topClickShortcut,
-                            accessibilityLabel: "Top-button click keyboard shortcut",
-                            onRecordingChanged: onRecordingChanged
-                        )
-                        .frame(height: 28)
-                        if preferences.topClickShortcut != nil {
-                            Button("Clear") { preferences.topClickShortcut = nil }
-                        }
-                    }
-                }
-            }
-        } header: {
-            Text("Click")
-        }
-        .disabled(!preferences.topZoomEnabled)
-        Section {
-            ValueSlider(
-                title: "Zoom speed", value: $preferences.zoomSensitivity, range: 0.25...6, step: 0.05,
-                accessibility: "Hold zoom speed", format: Self.percent)
-            Button("Open zoom verification…", action: showZoomTest)
-        } header: {
-            Text("Hold + move up/down to zoom")
-        } footer: {
-            Text(
-                "Higher speed needs less mouse movement. Zoom uses native pinch events in apps that support them."
-            )
-            .inspectorFootnote()
-        }
-        .disabled(!preferences.topZoomEnabled)
     }
 
     @ViewBuilder private var wheel: some View {
@@ -326,6 +178,128 @@ struct ValueSlider: View {
                 Slider(value: $value, in: range, step: step).labelsHidden().accessibilityLabel(accessibility)
                 Text(format(value)).monospacedDigit().foregroundStyle(.secondary)
                     .frame(width: 54, alignment: .trailing)
+            }
+        }
+    }
+}
+
+/// Click, hold, and drag settings shared by every clickable button.
+private struct ClickableButtonForm: View {
+    var control: MouseControl
+    var inspector: ButtonInspector
+
+    private var mapping: Binding<ButtonMapping> { inspector.$preferences.buttons[control] }
+    private var value: ButtonMapping { mapping.wrappedValue }
+    private var dragsByDistance: Bool {
+        ButtonSlot.directions.contains { !value[$0].isNone && value[$0].kind != .zoom }
+    }
+
+    var body: some View {
+        Section {
+            Toggle("Use this button", isOn: mapping.enabled)
+        } footer: {
+            if control == .middle {
+                Text("While on, the wheel button no longer middle-clicks unless an action says so.")
+                    .inspectorFootnote()
+            }
+        }
+        Group {
+            Section {
+                ForEach([ButtonSlot.click, .hold], id: \.self, content: row)
+            } header: {
+                Text("Press")
+            } footer: {
+                Text(
+                    "Click fires on release. Hold fires once after the hold delay, and then the click doesn’t."
+                )
+                .inspectorFootnote()
+            }
+            Section {
+                ForEach(ButtonSlot.directions, id: \.self, content: row)
+            } header: {
+                Text("Hold and drag")
+            } footer: {
+                Text(
+                    "Hold the button and move the mouse. While any drag is set, the pointer stays still as you hold the button."
+                ).inspectorFootnote()
+            }
+            timing
+            Section {
+                Button("Restore defaults") { mapping.wrappedValue = .defaults(for: control) }
+                    .disabled(value == .defaults(for: control))
+            }
+        }
+        .disabled(!value.enabled)
+    }
+
+    private func title(_ slot: ButtonSlot) -> String {
+        switch slot {
+        case .click: return "Click"
+        case .hold: return "Hold"
+        case .up: return "Drag up"
+        case .down: return "Drag down"
+        case .left: return "Drag left"
+        case .right: return "Drag right"
+        }
+    }
+
+    private func row(_ slot: ButtonSlot) -> some View {
+        let kind = Binding(
+            get: { value[slot].kind },
+            set: { kind in
+                let shortcut = value[slot].shortcut ?? ButtonMapping.defaults(for: control)[slot].shortcut
+                mapping.wrappedValue.set(ButtonAction(kind, shortcut: shortcut), for: slot)
+            })
+        let shortcut = Binding(
+            get: { value[slot].shortcut },
+            set: { mapping.wrappedValue[slot] = .shortcut($0) })
+        return VStack(alignment: .trailing, spacing: 6) {
+            Picker(title(slot), selection: kind) {
+                ForEach(ButtonAction.Kind.choices(for: slot)) { kind in Text(kind.label).tag(kind) }
+            }
+            if value[slot].kind == .shortcut {
+                ShortcutRecorder(
+                    shortcut: shortcut,
+                    accessibilityLabel: "\(inspector.button.title) \(title(slot).lowercased()) shortcut",
+                    onRecordingChanged: inspector.onRecordingChanged
+                )
+                .frame(width: 180, height: 28)
+            }
+        }
+    }
+
+    @ViewBuilder private var timing: some View {
+        if !value.hold.isNone || dragsByDistance || value.verticalZoom {
+            Section {
+                if !value.hold.isNone {
+                    ValueSlider(
+                        title: "Hold delay", value: mapping.holdMilliseconds, range: 150...1500, step: 50,
+                        accessibility: "Hold delay in milliseconds"
+                    ) { "\(Int($0)) ms" }
+                    VStack(alignment: .leading, spacing: 6) {
+                        TimingPad(delay: value.holdMilliseconds, result: inspector.$testResult).frame(
+                            height: 40)
+                        Text(inspector.testResult).font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                if dragsByDistance {
+                    ValueSlider(
+                        title: "Drag sensitivity", value: mapping.dragSensitivity, range: 0.25...3,
+                        step: 0.05,
+                        accessibility: "Drag sensitivity", format: ButtonInspector.percent)
+                }
+                if value.verticalZoom {
+                    ValueSlider(
+                        title: "Zoom speed", value: mapping.zoomSpeed, range: 0.25...6, step: 0.05,
+                        accessibility: "Zoom speed", format: ButtonInspector.percent)
+                    Button("Open zoom verification…", action: inspector.showZoomTest)
+                }
+            } header: {
+                Text("Timing")
+            } footer: {
+                if value.verticalZoom {
+                    Text("Zoom uses native pinch events in apps that support them.").inspectorFootnote()
+                }
             }
         }
     }

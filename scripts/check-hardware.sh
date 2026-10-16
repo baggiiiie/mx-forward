@@ -17,7 +17,7 @@ swiftc -swift-version 5 -emit-library -emit-module -module-name ForwardCore \
 swiftc -swift-version 5 -I "$check_dir" -L "$check_dir" -lForwardCore \
   -Xlinker -rpath -Xlinker "$check_dir" \
   Sources/MXForward/AppModel.swift Sources/MXForward/BoltMouse.swift \
-  Sources/MXForward/Settings.swift Sources/MXForward/ConfigJSON.swift Sources/MXForward/ZoomOutput.swift \
+  Sources/MXForward/Settings.swift Sources/MXForward/ConfigJSON.swift Sources/MXForward/ActionOutput.swift \
   Sources/MXForward/ZoomTestWindow.swift Sources/MXForward/WindowNavigationOutput.swift Sources/MXForward/WheelOutput.swift Sources/MXForward/ShortcutRecorder.swift Tests/AppSettingsChecks.swift Tests/HardwareChecks.swift \
   -o "$check_dir/HardwareChecks"
 "$check_dir/HardwareChecks"
