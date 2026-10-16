@@ -8,8 +8,8 @@ struct MXForwardApp: App {
         Window("MX Forward", id: "main") {
             ContentView(model: delegate.model)
         }
-        .defaultSize(width: 580, height: 700)
-        .windowResizability(.contentSize)
+        .defaultSize(width: 1040, height: 700)
+        .windowResizability(.contentMinSize)
         MenuBarExtra("MX Forward", systemImage: "computermouse") {
             MenuContents(model: delegate.model)
         }
@@ -18,7 +18,7 @@ struct MXForwardApp: App {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let model = AppModel()
+    let model = AppModel(configURL: ConfigJSON.defaultURL)
     private var terminating = false
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.activate(ignoringOtherApps: true)

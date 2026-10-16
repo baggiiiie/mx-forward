@@ -23,6 +23,11 @@ final class AppModel: ObservableObject {
         IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
     @Published private(set) var logitechRunning = false
     @Published private(set) var needsRelease = false
+    @Published private(set) var heldControls = Set<MouseControl>()
+    @Published private(set) var configError: String?
+    let configURL: URL?
+    private var configModified: Date?
+    private var configTask: Task<Void, Never>?
     private let mouse: BoltMouse
     private var sideButtons = SideButtonInterpreter()
     private var zoom = ZoomInterpreter()
@@ -34,7 +39,6 @@ final class AppModel: ObservableObject {
     private var appliedConfiguration: MouseConfiguration?
     private var settingsTask: Task<Void, Never>?
     private var recordingShortcut = false
-    private var heldControls = Set<MouseControl>()
     private var suppressedControls = Set<MouseControl>()
 
     var canEnable: Bool {
@@ -49,8 +53,9 @@ final class AppModel: ObservableObject {
     private var monitorTask: Task<Void, Never>?
     private var wakeObservers: [NSObjectProtocol] = []
 
-    init(mouse device: BoltMouse? = nil) {
+    init(mouse device: BoltMouse? = nil, configURL: URL? = nil) {
         self.mouse = device ?? BoltMouse()
+        self.configURL = configURL
         mouse.onStatus = { [weak self] text in
             guard let self else { return }
             self.status = text
@@ -118,6 +123,15 @@ final class AppModel: ObservableObject {
                 }
             })
         refreshPermissions()
+        if configURL != nil {
+            syncConfigFile()
+            configTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                    self?.syncConfigFile()
+                }
+            }
+        }
         connectIfNeeded()
         monitorTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -131,6 +145,7 @@ final class AppModel: ObservableObject {
 
     private func settingsChanged(from old: Preferences) {
         preferences.save()
+        writeConfigFile()
         var previous = old
         previous.resumeMappings = preferences.resumeMappings
         guard previous != preferences else { return }
@@ -154,6 +169,63 @@ final class AppModel: ObservableObject {
         }
         if !preferences.hasMappings && !needsRelease { status = "No mouse controls enabled" }
         if !enabled && canEnable { await enable() }
+    }
+
+    /// Applies JSON from the editor or an imported file, then saves the full config to disk.
+    func applyConfig(_ text: String) throws {
+        let next = try ConfigJSON.apply(text, to: preferences)
+        if next != preferences {
+            preferences = next
+            append("Applied JSON configuration")
+        }
+        writeConfigFile(force: true)
+    }
+
+    func rewriteConfigFile() { writeConfigFile(force: true) }
+
+    private func fileModified(_ url: URL) -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+    }
+
+    private func syncConfigFile() {
+        guard let url = configURL else { return }
+        let modified = fileModified(url)
+        guard modified == nil || modified != configModified else { return }
+        configModified = modified
+        guard modified != nil, let text = try? String(contentsOf: url, encoding: .utf8) else {
+            writeConfigFile(force: true)
+            return
+        }
+        do {
+            let next = try ConfigJSON.apply(text, to: preferences)
+            configError = nil
+            if next != preferences {
+                preferences = next
+                append("Applied changes from \(url.lastPathComponent)")
+            }
+        } catch {
+            let message = error.localizedDescription
+            if configError != message { append("\(url.lastPathComponent): \(message)") }
+            configError = message
+        }
+    }
+
+    private func writeConfigFile(force: Bool = false) {
+        guard let url = configURL else { return }
+        if !force, let text = try? String(contentsOf: url, encoding: .utf8) {
+            // Don't overwrite a file the user is still fixing.
+            guard let current = try? ConfigJSON.apply(text, to: preferences), current != preferences
+            else { return }
+        }
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try ConfigJSON.encode(preferences).write(to: url, atomically: true, encoding: .utf8)
+            configModified = fileModified(url)
+            configError = nil
+        } catch {
+            configError = "Could not write \(url.path): \(error.localizedDescription)"
+        }
     }
 
     func setRecordingShortcut(_ recording: Bool) {

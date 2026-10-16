@@ -16,6 +16,9 @@ A small native macOS app for the MX Master 3S with a **Logi Bolt USB receiver**.
 - Settings stay editable while mappings are active. Shortcuts and speeds apply immediately; changing selected controls or wheel mode briefly reconnects automatically.
 - Automatic discovery on launch, wake, and reconnect. After you Enable once, mappings resume automatically; an explicit Pause keeps them off.
 
+- Logitech Options–style window: click a button on the mouse picture to configure it. Pressed buttons light up while mappings are enabled.
+- Every setting is also available as JSON, in the **JSON** tab or in `~/.config/mx-forward/config.json`.
+
 The app talks directly to the Bolt receiver. Logitech's device agent must stay stopped; there is no Logitech runtime dependency. Rotation, pointer-speed controls, and per-app profiles are not implemented.
 
 ## Build
@@ -33,16 +36,16 @@ Quit MX Forward before rebuilding. Builds are ad-hoc signed by default; macOS ma
 
 ## Try it
 
-1. Turn **Forward** and **Back** on under **Side buttons**. Click either displayed shortcut, then press a key or combination to record it. Escape cancels; Clear disables that action, and the reset arrow restores its default. No hold shortcut is required. To add one, turn **Hold Forward for a shortcut** on, click **Record shortcut**, and press your key combination. Escape cancels. The timing pad previews the hold delay. Settings save automatically.
+1. In the **Buttons** tab, click **Forward** or **Back** on the mouse picture and turn the button on. Click the displayed shortcut, then press a key or combination to record it. Escape cancels; Clear disables that action, and the reset arrow restores its default. No hold shortcut is required. To add one, turn **Hold Forward for a shortcut** on, click **Record shortcut**, and press your key combination. Escape cancels. The timing pad previews the hold delay. Settings save automatically.
 2. Add **MX Forward** under **System Settings → Privacy & Security → Accessibility** for live keyboard and zoom actions. Add **Input Monitoring** only if discovery is blocked. Restart after changing permissions if needed.
 3. The app discovers the mouse automatically. Move it to wake it if needed and allow a few seconds. **Discover mouse** remains available for a manual retry.
 4. Stop Logitech's background agent with the command below. Closing the Options+ window is not enough. Its other custom gestures may stop working while the agent is stopped.
 5. Keep **Test mode** on, click **Enable**, then click both side buttons. Check the displayed Forward and Back actions. If Forward hold is enabled, check that a long press sends only its shortcut.
-6. For zoom alone, turn **Forward** and **Back** off and keep **Enable top button** on. Choose a **Single click** action. Record its shortcut if you choose **Keyboard shortcut**.
+6. For zoom alone, turn **Forward** and **Back** off and keep **Use top button** on. Choose a **Single click** action. Record its shortcut if you choose **Keyboard shortcut**.
 7. Turn Test mode off while enabled, or turn it off before you Enable. Point at content in a browser or image viewer. Click the top button for your chosen action; hold it and move up to zoom in or down to zoom out. Adjust **Hold zoom speed** while enabled; higher values need less mouse movement. Click and hold actions are independent.
-8. For the main wheel, turn **Control main wheel** on, choose **Scroll speed**, **Natural scrolling**, **Acceleration**, and **Wheel mode**. Acceleration starts at 100%; set it to 0% for constant speed. If mappings are already enabled, changes apply automatically. Ratchet locks the notches; Free-spin removes them. Keep current mode leaves the existing SmartShift mode and threshold untouched. These controls affect only the MX Master 3S main wheel.
-9. Under **Horizontal scrolling**, choose **Thumb-wheel direction → Standard** or **Reversed**. This applies automatically while enabled. Keep current direction leaves the native setting alone.
-10. **Open zoom verification** provides a native test canvas. Its buttons send real macOS gesture events; its status confirms whether they reached `magnify` / `smartMagnify` handlers. Test mode suppresses mouse actions, but these explicit verification buttons still send events into this test window.
+8. For the main wheel, select it on the mouse picture, turn **Control main wheel** on, choose **Scroll speed**, **Natural scrolling**, **Acceleration**, and **Wheel mode**. Acceleration starts at 100%; set it to 0% for constant speed. If mappings are already enabled, changes apply automatically. Ratchet locks the notches; Free-spin removes them. Keep current mode leaves the existing SmartShift mode and threshold untouched. These controls affect only the MX Master 3S main wheel.
+9. Select the **Thumb wheel** and choose **Standard** or **Reversed**. This applies automatically while enabled. Keep current direction leaves the native setting alone.
+10. **Open zoom verification** (Top button or **Setup** tab) provides a native test canvas. Its buttons send real macOS gesture events; its status confirms whether they reached `magnify` / `smartMagnify` handlers. Test mode suppresses mouse actions, but these explicit verification buttons still send events into this test window.
 
 ```sh
 ./scripts/logitech-session.sh stop
@@ -51,6 +54,29 @@ Quit MX Forward before rebuilding. Builds are ad-hoc signed by default; macOS ma
 ```
 
 The stop command disables Logitech's automatic launch and stops its device agent. This persists across logins until the start command restores automatic launch and the agent. It expects the standard Logitech LaunchAgent. Use `./scripts/logitech-session.sh status` to check it.
+
+## JSON configuration
+
+Settings are mirrored to `~/.config/mx-forward/config.json`, grouped per button. Edit it in any editor; saved changes apply within a second. Changes made in the app are written back. If the file has an error, the app keeps your edits, shows the problem, and offers to replace the file with the current settings. The **JSON** tab has an editor (⌘S applies), import/export, and a reference.
+
+```json
+{
+  "testMode": false,
+  "buttons": {
+    "forward": { "enabled": true, "click": "default", "hold": { "enabled": true, "shortcut": "cmd+shift+t", "delayMs": 400 } },
+    "back": { "enabled": true, "click": "cmd+[" },
+    "gesture": { "enabled": true, "click": "default", "up": "default", "down": "none", "left": "ctrl+left", "right": "ctrl+right", "sensitivityPercent": 100 },
+    "top": { "enabled": true, "click": "smartZoom", "zoomSpeedPercent": 200 },
+    "wheel": { "enabled": true, "speedPercent": 150, "accelerationPercent": 100, "natural": true, "mode": "ratchet" },
+    "thumbWheel": { "direction": "reversed" }
+  }
+}
+```
+
+- Actions are `"default"` (the built-in action or macOS shortcut), `"none"`, or a shortcut such as `"cmd+shift+]"` or `"⌘⇧]"`. The top button also accepts `"smartZoom"`.
+- Modifiers: `cmd`, `opt`, `ctrl`, `shift`, `fn`. Keys: letters, digits, punctuation, `return`, `tab`, `space`, `delete`, `escape`, arrow names, `home`, `end`, `pageup`, `pagedown`, `f1`–`f20`. Key names refer to US-layout key positions; shortcuts recorded on other layouts are written as `{"keyCode": 30, "modifiers": ["cmd"], "label": "+"}`.
+- `wheel.mode`: `unchanged`, `ratchet`, `freeSpin`. `thumbWheel.direction`: `unchanged`, `standard`, `reversed`. Percentages use 100 for 100% and are clamped to the app's slider ranges.
+- Any key can be omitted to keep its current value, so a file can contain just the settings you care about.
 
 ## Behavior and recovery
 
@@ -77,7 +103,7 @@ Run the optional hardware checks with MX Forward quit, Logitech's device agent s
 ./scripts/check-hardware.sh
 ```
 
-These use separate test preferences and send no keyboard, zoom, or scroll actions. They check preference migration, custom/cleared mapping persistence, recorder capture/cancellation, system-shortcut parsing and arrow-key event flags, claim and restore the selected buttons, simulate sleep/wake notifications, check that Enable is ignored during sleep, and verify Pause and quit behavior. Live shortcut/speed/acceleration changes, automatic hardware updates, and disabling/re-enabling all controls are also tested. They also verify all three wheel-mode choices, both horizontal directions, and restoration on the real mouse, and decode generated pixel-scroll events with macOS. They do not put the Mac to sleep.
+These use separate test preferences and send no keyboard, zoom, or scroll actions. They check preference migration, custom/cleared mapping persistence, JSON config round-trips, partial files, and error messages, recorder capture/cancellation, system-shortcut parsing and arrow-key event flags, claim and restore the selected buttons, simulate sleep/wake notifications, check that Enable is ignored during sleep, and verify Pause and quit behavior. Live shortcut/speed/acceleration changes, automatic hardware updates, and disabling/re-enabling all controls are also tested. They also verify all three wheel-mode choices, both horizontal directions, and restoration on the real mouse, and decode generated pixel-scroll events with macOS. They do not put the Mac to sleep.
 
 Verified on the MX Master 3S in Bolt slot 2 with button-feature version 5. Manual checks confirmed Back, Forward, the Forward hold shortcut, smart zoom, and held zoom at 200%. Manual checks also confirmed thumb click/up for Mission Control, down for App Exposé, and left/right for desktop switching. Live main-wheel scrolling also works in the installed build; the speed, direction, and wheel-mode controls were tried without a reported failure. Live shortcut recording and playback while enabled are confirmed. Manual comparison also confirmed that fast-spin acceleration feels right while slow scrolling stays precise. Manual checks confirmed that Standard/Reversed flips horizontal scrolling while enabled. The top-button keyboard-shortcut click action still needs a manual check.
 

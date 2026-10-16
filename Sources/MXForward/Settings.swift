@@ -193,8 +193,12 @@ struct Preferences: Codable, Equatable {
     static let storageKey = "preferences.v1"
     static func load() -> Preferences {
         guard let data = UserDefaults.standard.data(forKey: storageKey),
-            var value = try? JSONDecoder().decode(Preferences.self, from: data)
+            let value = try? JSONDecoder().decode(Preferences.self, from: data)
         else { return Preferences() }
+        return value.normalized()
+    }
+    func normalized() -> Preferences {
+        var value = self
         if !value.holdMilliseconds.isFinite { value.holdMilliseconds = 400 }
         value.holdMilliseconds = min(1500, max(150, value.holdMilliseconds))
         if !value.zoomSensitivity.isFinite { value.zoomSensitivity = 2 }

@@ -49,6 +49,7 @@ enum AppSettingsChecks {
         preferences.save()
         try require(Preferences.load().wheelAcceleration == 2, "Acceleration exceeded its safe limit")
         print("PASS: wheel acceleration migrates, saves Off, and clamps to its supported range")
+        try runConfigJSON(preferences.normalized())
 
         let recorder = RecorderButton()
         var recorded: [Shortcut] = []
@@ -97,5 +98,64 @@ enum AppSettingsChecks {
         print(
             "PASS: click-to-record captures keys, ignores repeats, and cancels on Escape, disable, or focus loss"
         )
+    }
+
+    private static func runConfigJSON(_ custom: Preferences) throws {
+        var preferences = custom
+        preferences.wheelSpeed = 0.25 + 0.05 * 18
+        preferences.thumbShortcuts["left"] = ShortcutMapping(
+            source: .custom,
+            shortcut: Shortcut(keyCode: 30, modifiers: CGEventFlags.maskCommand.rawValue, keyLabel: "+"))
+        var base = Preferences()
+        base.resumeMappings = preferences.resumeMappings
+        let text = ConfigJSON.encode(preferences)
+        try require(
+            ConfigJSON.document(from: try ConfigJSON.apply(text, to: base))
+                == ConfigJSON.document(from: preferences),
+            "JSON did not round-trip every setting")
+        try require(
+            try ConfigJSON.apply(text, to: preferences) == preferences, "An unchanged file changed settings")
+        try require(text.contains(#""click": "cmd+a""#), "Shortcuts should be written as readable text")
+        try require(text.contains(#""label": "+""#), "Layout labels were lost")
+        print("PASS: JSON configuration round-trips custom, cleared, and non-US shortcuts exactly")
+
+        let cmd = CGEventFlags.maskCommand.rawValue
+        let shift = CGEventFlags.maskShift.rawValue
+        let parsed = try ShortcutText.parse("cmd+shift+]")
+        try require(
+            parsed.keyCode == 30 && parsed.modifiers == cmd | shift && parsed.label == "⇧⌘]", "Bad parse")
+        try require(
+            try ShortcutText.parse("⌘⇧T") == ShortcutText.parse("shift+cmd+t"), "Symbol modifiers failed")
+        try require(try ShortcutText.parse("ctrl+up").label == "⌃↑", "Named keys failed")
+        try require(ShortcutText.format(parsed) == "shift+cmd+]", "Shortcut text is not canonical")
+        for invalid in ["cmd+foo", "hyper+a", "cmd+", ""] {
+            try require((try? ShortcutText.parse(invalid)) == nil, "\"\(invalid)\" should be rejected")
+        }
+        print("PASS: shortcut text parses modifiers, symbols, and named keys, and rejects unknown names")
+
+        let partial = try ConfigJSON.apply(
+            #"{"buttons": {"back": {"click": "none"}, "wheel": {"speedPercent": 5000, "mode": "freeSpin"}}}"#,
+            to: preferences)
+        var expected = preferences
+        expected.backClick = ShortcutMapping(source: .none)
+        expected.wheelSpeed = 6
+        expected.wheelMode = .freeSpin
+        try require(partial == expected, "Partial JSON changed unrelated settings or skipped clamping")
+        let failures: [(String, String)] = [
+            (#"{"buttons": {"forward": {"click": "smartZoom"}}}"#, "buttons.forward.click"),
+            (#"{"buttons": {"wheel": {"mode": "spin"}}}"#, "mode"),
+            (#"{"buttons": {"top": {"enabled": "yes"}}}"#, "true or false"),
+            (#"{"buttons": {"gesture": {"up": "cmd+nope"}}}"#, "nope"),
+            ("{ not json", "Invalid JSON"),
+        ]
+        for (json, message) in failures {
+            do {
+                _ = try ConfigJSON.apply(json, to: preferences)
+                throw MouseError.message("Accepted invalid JSON: \(json)")
+            } catch let error as ConfigError {
+                try require(error.message.contains(message), "Unclear error for \(json): \(error.message)")
+            }
+        }
+        print("PASS: partial JSON updates only listed settings, clamps values, and explains invalid entries")
     }
 }
