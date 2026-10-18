@@ -1,8 +1,8 @@
 import AppKit
 import ForwardCore
 
-enum WheelOutput {
-    static func event(
+package enum WheelOutput {
+    package static func event(
         pixels: Int32, horizontal: Int32 = 0, phase: CGScrollPhase? = nil,
         at point: CGPoint? = nil
     ) -> CGEvent? {
@@ -21,7 +21,7 @@ enum WheelOutput {
         return event
     }
 
-    static func dragEvent(_ action: DragScrollAction, at point: CGPoint) -> CGEvent? {
+    package static func dragEvent(_ action: DragScrollAction, at point: CGPoint) -> CGEvent? {
         let x: Int32
         let y: Int32
         let phase: CGScrollPhase
@@ -34,13 +34,13 @@ enum WheelOutput {
         return event(pixels: y, horizontal: x, phase: phase, at: point)
     }
 
-    static func sendDrag(_ action: DragScrollAction, at point: CGPoint) -> Bool {
+    package static func sendDrag(_ action: DragScrollAction, at point: CGPoint) -> Bool {
         guard AXIsProcessTrusted(), let event = dragEvent(action, at: point) else { return false }
         event.post(tap: .cghidEventTap)
         return true
     }
 
-    static func send(pixels: Int32) -> Bool {
+    package static func send(pixels: Int32) -> Bool {
         guard pixels != 0 else { return true }
         guard AXIsProcessTrusted(), let event = event(pixels: pixels) else { return false }
         event.post(tap: .cghidEventTap)

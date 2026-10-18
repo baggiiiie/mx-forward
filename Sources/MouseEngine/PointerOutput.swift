@@ -2,11 +2,11 @@ import AppKit
 
 /// Replays pointer movement while the mouse sends raw drag reports.
 @MainActor
-struct PointerOutput {
-    private(set) var location: CGPoint
+package struct PointerOutput {
+    package private(set) var location: CGPoint
     private let displays: [CGRect]
 
-    init(at location: CGPoint, displays: [CGRect]? = nil) {
+    package init(at location: CGPoint, displays: [CGRect]? = nil) {
         self.location = location
         self.displays =
             displays
@@ -19,7 +19,7 @@ struct PointerOutput {
             }
     }
 
-    mutating func event(dx: Int16, dy: Int16) -> CGEvent? {
+    package mutating func event(dx: Int16, dy: Int16) -> CGEvent? {
         let proposed = CGPoint(x: location.x + Double(dx), y: location.y + Double(dy))
         let target =
             displays.map { bounds in
@@ -42,7 +42,7 @@ struct PointerOutput {
         return event
     }
 
-    mutating func send(dx: Int16, dy: Int16) -> Bool {
+    package mutating func send(dx: Int16, dy: Int16) -> Bool {
         guard AXIsProcessTrusted(), let event = event(dx: dx, dy: dy) else { return false }
         event.post(tap: .cghidEventTap)
         return true

@@ -158,7 +158,7 @@ struct ConfigError: Error, LocalizedError {
 }
 
 /// Converts shortcuts to and from text such as "cmd+shift+]".
-enum ShortcutText {
+package enum ShortcutText {
     /// Modifier names in display order. The first name is the one written to the file.
     private static let modifiers: [([String], UInt64)] = [
         (["ctrl", "control", "⌃"], CGEventFlags.maskControl.rawValue),
@@ -189,15 +189,15 @@ enum ShortcutText {
     private static let namesByCode = Dictionary(
         keys.map { ($0.1, $0.0) }, uniquingKeysWith: { first, _ in first })
 
-    static func modifier(_ name: String) -> UInt64? { modifiersByName[name.lowercased()] }
+    package static func modifier(_ name: String) -> UInt64? { modifiersByName[name.lowercased()] }
 
-    static func modifierNames(_ flags: UInt64) -> [String] {
+    package static func modifierNames(_ flags: UInt64) -> [String] {
         modifiers.filter { flags & $0.1 != 0 }.map { $0.0[0] }
     }
 
-    static func name(for keyCode: UInt16) -> String? { namesByCode[keyCode] }
+    package static func name(for keyCode: UInt16) -> String? { namesByCode[keyCode] }
 
-    static func parse(_ text: String) throws -> Shortcut {
+    package static func parse(_ text: String) throws -> Shortcut {
         var remaining = text.replacingOccurrences(of: " ", with: "")
         var modifiers: UInt64 = 0
         // Symbol modifiers can be written without "+", as in "⌘⇧T".
@@ -228,7 +228,7 @@ enum ShortcutText {
     }
 
     /// Returns nil when the text form would lose the shortcut's label, e.g. on a non-US layout.
-    static func format(_ shortcut: Shortcut) -> String? {
+    package static func format(_ shortcut: Shortcut) -> String? {
         guard let name = namesByCode[shortcut.keyCode] else { return nil }
         let character = name.count == 1 ? name : nil
         guard Shortcut.keyName(shortcut.keyCode, characters: character) == shortcut.keyLabel else {
@@ -240,8 +240,8 @@ enum ShortcutText {
     }
 }
 
-enum ConfigJSON {
-    static let defaultURL = FileManager.default.homeDirectoryForCurrentUser
+package enum ConfigJSON {
+    package static let defaultURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".config/mx-forward/config.json")
 
     static func document(from preferences: Preferences) -> ConfigDocument {
@@ -266,7 +266,7 @@ enum ConfigJSON {
             thumbWheel: .init(direction: preferences.horizontalDirection))
     }
 
-    static func encode(_ preferences: Preferences) -> String {
+    package static func encode(_ preferences: Preferences) -> String {
         guard let data = try? JSONEncoder().encode(document(from: preferences)),
             let object = try? JSONSerialization.jsonObject(with: data)
         else { return "{}\n" }
@@ -308,7 +308,7 @@ enum ConfigJSON {
     }
 
     /// Returns `base` with every setting listed in `text` replaced.
-    static func apply(_ text: String, to base: Preferences) throws -> Preferences {
+    package static func apply(_ text: String, to base: Preferences) throws -> Preferences {
         let document: ConfigDocument
         do { document = try JSONDecoder().decode(ConfigDocument.self, from: Data(text.utf8)) } catch {
             throw ConfigError(message: describe(error))
@@ -374,7 +374,7 @@ enum ConfigJSON {
         percent == Self.percent(current) ? current : percent / 100
     }
 
-    static func describe(_ error: Error) -> String {
+    package static func describe(_ error: Error) -> String {
         func path(_ context: DecodingError.Context) -> String {
             let keys = context.codingPath.map { $0.intValue.map { "[\($0)]" } ?? $0.stringValue }
             return keys.isEmpty ? "" : keys.joined(separator: ".") + ": "

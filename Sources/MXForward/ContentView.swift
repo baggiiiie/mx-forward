@@ -1,3 +1,4 @@
+import MouseEngine
 import AppKit
 import ForwardCore
 import SwiftUI
@@ -30,9 +31,9 @@ struct ContentView: View {
                     MouseConfigurator(
                         preferences: $model.preferences, selection: $window.selection,
                         testResult: $model.testResult, held: model.heldControls,
-                        locked: model.busy || model.needsRelease,
+                        locked: !model.agentAvailable || model.busy || model.needsRelease,
                         onRecordingChanged: model.setRecordingShortcut, showZoomTest: model.showZoomTest)
-                case .json: ConfigEditorView(model: model, state: editor)
+                case .json: ConfigEditorView(model: model, state: editor).disabled(!model.agentAvailable)
                 case .setup: SetupView(model: model)
                 }
             }
@@ -85,7 +86,7 @@ struct ContentView: View {
                 Toggle("Test mode", isOn: $model.preferences.testMode)
                     .toggleStyle(.switch).controlSize(.small)
                     .help("Show actions without sending them")
-                    .disabled(model.busy || model.needsRelease)
+                    .disabled(!model.agentAvailable || model.busy || model.needsRelease)
                 if model.enabled || model.needsRelease || model.preferences.resumeMappings {
                     Button(model.needsRelease ? "Retry restoring" : "Pause") {
                         Task { await model.pause() }
@@ -183,7 +184,7 @@ struct SetupView: View {
                 Text("Permissions")
             } footer: {
                 Text(
-                    "Accessibility is required for live actions. Add Input Monitoring only if discovery is blocked. Restart after changing permissions. Closing this window keeps the app in the menu bar."
+                    "Grant permissions to MX Forward Agent (inside MX Forward.app → Contents → Library → LoginItems). Shortcut recording may also need Accessibility for MX Forward. Closing this window quits the settings UI; the lightweight agent keeps mappings active."
                 )
                 .font(.caption).foregroundStyle(.secondary)
             }
@@ -198,9 +199,18 @@ struct SetupView: View {
                 Text("./scripts/logitech-session.sh stop · start · status")
                     .font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
             }
+            Section("Background agent") {
+                Text("The agent starts at login and restarts after a crash. Pause restores native controls without stopping the agent.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button("Start or reconnect agent") { model.reconnectAgent() }
+                Button("Stop agent and disable startup", role: .destructive) {
+                    Task { await model.uninstallAgent() }
+                }
+                .disabled(!model.agentAvailable || model.busy)
+            }
             Section("Testing") {
                 Toggle("Test mode — show actions without sending them", isOn: $model.preferences.testMode)
-                    .disabled(model.busy || model.needsRelease)
+                    .disabled(!model.agentAvailable || model.busy || model.needsRelease)
                 HStack {
                     Text("Check that apps receive native zoom gestures.").foregroundStyle(.secondary)
                     Spacer()

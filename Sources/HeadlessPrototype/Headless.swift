@@ -1,3 +1,4 @@
+import MouseEngine
 import AppKit
 import Combine
 import Darwin
@@ -6,11 +7,11 @@ import Darwin
 @main
 @MainActor
 enum HeadlessPrototype {
-    private static var model: AppModel?
+    private static var model: MouseEngine?
     private static var signals: [DispatchSourceSignal] = []
     private static var subscriptions = Set<AnyCancellable>()
     private static var stopping = false
-    private static var lockDescriptor: Int32 = -1
+    private static var owner: ControllerLock?
 
     static func main() {
         setbuf(stdout, nil)
@@ -41,17 +42,13 @@ enum HeadlessPrototype {
             exit(2)
         }
         if !offline {
-            let lockPath = NSTemporaryDirectory() + "mx-forward-headless-\(getuid()).lock"
-            lockDescriptor = open(lockPath, O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o600)
-            guard lockDescriptor >= 0, flock(lockDescriptor, LOCK_EX | LOCK_NB) == 0 else {
-                print("Another headless controller is running, or its lock is unavailable.")
-                exit(2)
-            }
+            do { owner = try ControllerLock() }
+            catch { print(error.localizedDescription); exit(2) }
         }
         NSApplication.shared.setActivationPolicy(.prohibited)
         var preferences = Preferences()
         preferences.resumeMappings = false
-        let engine = AppModel(
+        let engine = MouseEngine(
             configURL: offline ? nil : ConfigJSON.defaultURL,
             initialPreferences: preferences, startsHardware: !offline, persistsSettings: false)
         model = engine
@@ -95,7 +92,7 @@ enum HeadlessPrototype {
         stopping = true
         // Don't exit in the middle of a claim/restore operation.
         while model.busy { try? await Task.sleep(for: .milliseconds(100)) }
-        let restored = await model.quitSafely(showAlert: false)
+        let restored = await model.shutdown()
         if !restored {
             print("Restoration failed. Power-cycle the mouse to restore native controls.")
         }

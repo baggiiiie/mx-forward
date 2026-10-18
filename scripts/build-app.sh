@@ -1,33 +1,36 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-if /usr/bin/pgrep -x MXForward >/dev/null; then
-  printf 'Quit MX Forward before rebuilding so its mouse cleanup can finish.\n' >&2
-  exit 1
-fi
+for name in MXForward MXForwardAgent MXForwardHeadless; do
+  if /usr/bin/pgrep -x "$name" >/dev/null; then
+    printf 'Stop %s before packaging so mouse cleanup can finish.\n' "$name" >&2
+    exit 1
+  fi
+done
 swift build -c release --product MXForward
+swift build -c release --product MXForwardAgent
 bin_path="$(swift build -c release --show-bin-path)"
 app_path="$PWD/dist/MX Forward.app"
-mkdir -p "$app_path/Contents/MacOS"
+agent_path="$app_path/Contents/Library/LoginItems/MX Forward Agent.app"
+mkdir -p "$app_path/Contents/MacOS" "$agent_path/Contents/MacOS"
 cp "$bin_path/MXForward" "$app_path/Contents/MacOS/MXForward"
-cat > "$app_path/Contents/Info.plist" <<'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleIdentifier</key><string>local.baggie.mxforward</string>
-<key>CFBundleName</key><string>MX Forward</string>
-<key>CFBundleDisplayName</key><string>MX Forward</string>
-<key>CFBundleExecutable</key><string>MXForward</string>
-<key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.6.2</string>
-<key>CFBundleVersion</key><string>10</string>
-<key>LSMinimumSystemVersion</key><string>14.0</string>
-<key>NSHighResolutionCapable</key><true/>
-<key>NSInputMonitoringUsageDescription</key><string>Read the selected Logitech Bolt mouse buttons and held movement for shortcuts and zoom.</string>
-</dict></plist>
-PLIST
-# Use normal signing requirements; local builds default to ad-hoc signing.
-/usr/bin/codesign --force --sign "${MX_FORWARD_SIGN_IDENTITY:--}" \
-  --identifier local.baggie.mxforward "$app_path"
-/usr/bin/codesign --verify --strict "$app_path"
-printf 'Built %s\n' "$app_path"
+cp "$bin_path/MXForwardAgent" "$agent_path/Contents/MacOS/MXForwardAgent"
+/usr/bin/python3 - "$app_path" "$agent_path" <<'PY'
+import pathlib, plistlib, sys
+for path, identifier, name, executable, agent in [
+    (sys.argv[1], 'local.baggie.mxforward', 'MX Forward', 'MXForward', False),
+    (sys.argv[2], 'local.baggie.mxforward.agent', 'MX Forward Agent', 'MXForwardAgent', True),
+]:
+    info = dict(CFBundleIdentifier=identifier, CFBundleName=name, CFBundleDisplayName=name,
+                CFBundleExecutable=executable, CFBundlePackageType='APPL',
+                CFBundleShortVersionString='0.7.0', CFBundleVersion='11',
+                LSMinimumSystemVersion='14.0', NSHighResolutionCapable=True,
+                NSInputMonitoringUsageDescription='Read Logitech Bolt mouse buttons and held movement for mappings.')
+    if agent: info['LSUIElement'] = True
+    with open(pathlib.Path(path) / 'Contents/Info.plist', 'wb') as f: plistlib.dump(info, f)
+PY
+identity="${MX_FORWARD_SIGN_IDENTITY:--}"
+/usr/bin/codesign --force --sign "$identity" --identifier local.baggie.mxforward.agent "$agent_path"
+/usr/bin/codesign --force --sign "$identity" --identifier local.baggie.mxforward "$app_path"
+/usr/bin/codesign --verify --deep --strict "$app_path"
+printf 'Built %s\nInstall: ./scripts/install-app.sh\n' "$app_path"

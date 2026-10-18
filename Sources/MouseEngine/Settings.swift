@@ -2,14 +2,20 @@ import AppKit
 import CoreGraphics
 import ForwardCore
 
-struct Shortcut: Codable, Equatable {
-    var keyCode: UInt16
-    var modifiers: UInt64
-    var keyLabel: String
-    static let forward = Shortcut(keyCode: 30, modifiers: CGEventFlags.maskCommand.rawValue, keyLabel: "]")
-    static let back = Shortcut(keyCode: 33, modifiers: CGEventFlags.maskCommand.rawValue, keyLabel: "[")
+package struct Shortcut: Codable, Equatable {
+    package var keyCode: UInt16
+    package var modifiers: UInt64
+    package var keyLabel: String
 
-    var label: String {
+    package init(keyCode: UInt16, modifiers: UInt64, keyLabel: String) {
+        self.keyCode = keyCode
+        self.modifiers = modifiers
+        self.keyLabel = keyLabel
+    }
+    package static let forward = Shortcut(keyCode: 30, modifiers: CGEventFlags.maskCommand.rawValue, keyLabel: "]")
+    package static let back = Shortcut(keyCode: 33, modifiers: CGEventFlags.maskCommand.rawValue, keyLabel: "[")
+
+    package var label: String {
         let flags = CGEventFlags(rawValue: modifiers)
         return [
             (CGEventFlags.maskControl, "⌃"), (.maskAlternate, "⌥"),
@@ -18,7 +24,7 @@ struct Shortcut: Codable, Equatable {
         .filter { flags.contains($0.0) }.map(\.1).joined() + keyLabel
     }
 
-    static func recorded(from event: NSEvent) -> Shortcut {
+    package static func recorded(from event: NSEvent) -> Shortcut {
         let mask: NSEvent.ModifierFlags = [.command, .control, .option, .shift, .function]
         var flags = event.modifierFlags.intersection(mask)
         if (123...126).contains(event.keyCode) { flags.remove(.function) }
@@ -27,7 +33,7 @@ struct Shortcut: Codable, Equatable {
             keyLabel: keyName(event.keyCode, characters: event.charactersIgnoringModifiers))
     }
 
-    static func keyName(_ keyCode: UInt16, characters: String? = nil) -> String {
+    package static func keyName(_ keyCode: UInt16, characters: String? = nil) -> String {
         let names: [UInt16: String] = [
             36: "Return", 48: "Tab", 49: "Space", 51: "Delete",
             53: "Escape", 117: "⌦", 123: "←", 124: "→", 125: "↓", 126: "↑",
@@ -39,12 +45,12 @@ struct Shortcut: Codable, Equatable {
     }
 }
 
-struct ButtonAction: Codable, Equatable {
-    enum Kind: String, Codable, CaseIterable, Identifiable {
+package struct ButtonAction: Codable, Equatable {
+    package enum Kind: String, Codable, CaseIterable, Identifiable {
         case none, shortcut, missionControl, appExpose, desktopLeft, desktopRight, smartZoom, middleClick
         case zoom, scroll
-        var id: Self { self }
-        var label: String {
+        package var id: Self { self }
+        package var label: String {
             switch self {
             case .none: return "No action"
             case .shortcut: return "Keyboard shortcut"
@@ -58,7 +64,7 @@ struct ButtonAction: Codable, Equatable {
             case .scroll: return "Scroll & navigate"
             }
         }
-        static func choices(for slot: ButtonSlot) -> [Kind] {
+        package static func choices(for slot: ButtonSlot) -> [Kind] {
             switch slot {
             case .click, .hold: return allCases.filter { $0 != .zoom && $0 != .scroll }
             case .left, .right: return allCases.filter { $0 != .zoom }
@@ -67,36 +73,37 @@ struct ButtonAction: Codable, Equatable {
         }
     }
 
-    var kind: Kind
-    var shortcut: Shortcut?
+    package var kind: Kind
+    package var shortcut: Shortcut?
 
-    init(_ kind: Kind, shortcut: Shortcut? = nil) {
+    package init(_ kind: Kind, shortcut: Shortcut? = nil) {
         self.kind = kind
         self.shortcut = kind == .shortcut ? shortcut : nil
     }
 
-    static func shortcut(_ shortcut: Shortcut?) -> ButtonAction {
+    package static func shortcut(_ shortcut: Shortcut?) -> ButtonAction {
         ButtonAction(.shortcut, shortcut: shortcut)
     }
 
-    var isNone: Bool { kind == .none }
-    var label: String { kind == .shortcut ? shortcut?.label ?? "Shortcut not set" : kind.label }
+    package var isNone: Bool { kind == .none }
+    package var label: String { kind == .shortcut ? shortcut?.label ?? "Shortcut not set" : kind.label }
 }
 
 /// What one button does on click, hold, and drag, plus its timing.
-struct ButtonMapping: Codable, Equatable {
-    var enabled = true
-    var click = ButtonAction(.none)
-    var hold = ButtonAction(.none)
-    var up = ButtonAction(.none)
-    var down = ButtonAction(.none)
-    var left = ButtonAction(.none)
-    var right = ButtonAction(.none)
-    var holdMilliseconds = 400.0
-    var dragSensitivity = 1.0
-    var zoomSpeed = 2.0
+package struct ButtonMapping: Codable, Equatable {
+    package init() {}
+    package var enabled = true
+    package var click = ButtonAction(.none)
+    package var hold = ButtonAction(.none)
+    package var up = ButtonAction(.none)
+    package var down = ButtonAction(.none)
+    package var left = ButtonAction(.none)
+    package var right = ButtonAction(.none)
+    package var holdMilliseconds = 400.0
+    package var dragSensitivity = 1.0
+    package var zoomSpeed = 2.0
 
-    subscript(_ slot: ButtonSlot) -> ButtonAction {
+    package subscript(_ slot: ButtonSlot) -> ButtonAction {
         get {
             switch slot {
             case .click: return click
@@ -120,7 +127,7 @@ struct ButtonMapping: Codable, Equatable {
     }
 
     /// Zoom links up and down; scrolling links all four directions.
-    mutating func set(_ action: ButtonAction, for slot: ButtonSlot) {
+    package mutating func set(_ action: ButtonAction, for slot: ButtonSlot) {
         let wasZoom = verticalZoom
         if ButtonSlot.directions.contains(slot) {
             if action.kind == .scroll {
@@ -141,11 +148,11 @@ struct ButtonMapping: Codable, Equatable {
         }
     }
 
-    var dragScroll: Bool { ButtonSlot.directions.contains { self[$0].kind == .scroll } }
-    var verticalZoom: Bool { up.kind == .zoom || down.kind == .zoom }
-    var reportsMovement: Bool { ButtonSlot.directions.contains { !self[$0].isNone } }
+    package var dragScroll: Bool { ButtonSlot.directions.contains { self[$0].kind == .scroll } }
+    package var verticalZoom: Bool { up.kind == .zoom || down.kind == .zoom }
+    package var reportsMovement: Bool { ButtonSlot.directions.contains { !self[$0].isNone } }
 
-    func normalized() -> ButtonMapping {
+    package func normalized() -> ButtonMapping {
         var value = self
         for slot in ButtonSlot.allCases where !ButtonAction.Kind.choices(for: slot).contains(value[slot].kind)
         {
@@ -164,7 +171,7 @@ struct ButtonMapping: Codable, Equatable {
         return value
     }
 
-    static func defaults(for control: MouseControl) -> ButtonMapping {
+    package static func defaults(for control: MouseControl) -> ButtonMapping {
         var mapping = ButtonMapping()
         switch control {
         case .forward: mapping.click = .shortcut(.forward)
@@ -188,14 +195,15 @@ struct ButtonMapping: Codable, Equatable {
     }
 }
 
-struct ButtonMappings: Codable, Equatable {
-    var forward = ButtonMapping.defaults(for: .forward)
-    var back = ButtonMapping.defaults(for: .back)
-    var thumb = ButtonMapping.defaults(for: .thumb)
-    var top = ButtonMapping.defaults(for: .top)
-    var middle = ButtonMapping.defaults(for: .middle)
+package struct ButtonMappings: Codable, Equatable {
+    package init() {}
+    package var forward = ButtonMapping.defaults(for: .forward)
+    package var back = ButtonMapping.defaults(for: .back)
+    package var thumb = ButtonMapping.defaults(for: .thumb)
+    package var top = ButtonMapping.defaults(for: .top)
+    package var middle = ButtonMapping.defaults(for: .middle)
 
-    subscript(_ control: MouseControl) -> ButtonMapping {
+    package subscript(_ control: MouseControl) -> ButtonMapping {
         get {
             switch control {
             case .forward: return forward
@@ -217,17 +225,17 @@ struct ButtonMappings: Codable, Equatable {
     }
 }
 
-struct MouseConfiguration: Equatable {
-    var controls: Set<MouseControl>
-    var movementControls: Set<MouseControl>
-    var wheelMode: WheelMode?
-    var horizontalInverted: Bool?
+package struct MouseConfiguration: Equatable {
+    package var controls: Set<MouseControl>
+    package var movementControls: Set<MouseControl>
+    package var wheelMode: WheelMode?
+    package var horizontalInverted: Bool?
 }
 
-enum WheelMode: String, Codable, CaseIterable, Identifiable {
+package enum WheelMode: String, Codable, CaseIterable, Identifiable {
     case unchanged, ratchet, freeSpin
-    var id: Self { self }
-    var label: String {
+    package var id: Self { self }
+    package var label: String {
         switch self {
         case .unchanged: return "Keep current mode"
         case .ratchet: return "Ratchet"
@@ -236,17 +244,17 @@ enum WheelMode: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum HorizontalDirection: String, Codable, CaseIterable, Identifiable {
+package enum HorizontalDirection: String, Codable, CaseIterable, Identifiable {
     case unchanged, standard, reversed
-    var id: Self { self }
-    var label: String {
+    package var id: Self { self }
+    package var label: String {
         switch self {
         case .unchanged: return "Keep current direction"
         case .standard: return "Standard"
         case .reversed: return "Reversed"
         }
     }
-    var inverted: Bool? {
+    package var inverted: Bool? {
         switch self {
         case .unchanged: return nil
         case .standard: return false
@@ -255,35 +263,35 @@ enum HorizontalDirection: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-struct Preferences: Codable, Equatable {
-    var testMode = true
-    var resumeMappings = false
-    var buttons = ButtonMappings()
-    var wheelEnabled = false
-    var wheelSpeed = 1.0
-    var wheelAcceleration = 1.0
-    var wheelNatural = true
-    var wheelMode = WheelMode.unchanged
-    var horizontalDirection = HorizontalDirection.unchanged
+package struct Preferences: Codable, Equatable {
+    package var testMode = true
+    package var resumeMappings = false
+    package var buttons = ButtonMappings()
+    package var wheelEnabled = false
+    package var wheelSpeed = 1.0
+    package var wheelAcceleration = 1.0
+    package var wheelNatural = true
+    package var wheelMode = WheelMode.unchanged
+    package var horizontalDirection = HorizontalDirection.unchanged
 
-    var hasMappings: Bool { !controls.isEmpty || wheelEnabled || horizontalDirection.inverted != nil }
+    package var hasMappings: Bool { !controls.isEmpty || wheelEnabled || horizontalDirection.inverted != nil }
 
-    var controls: Set<MouseControl> { Set(MouseControl.allCases.filter { buttons[$0].enabled }) }
+    package var controls: Set<MouseControl> { Set(MouseControl.allCases.filter { buttons[$0].enabled }) }
 
-    var hardwareConfiguration: MouseConfiguration {
+    package var hardwareConfiguration: MouseConfiguration {
         MouseConfiguration(
             controls: controls, movementControls: controls.filter { buttons[$0].reportsMovement },
             wheelMode: wheelEnabled ? wheelMode : nil, horizontalInverted: horizontalDirection.inverted)
     }
 
-    init() {}
+    package init() {}
 
     private enum CodingKeys: String, CodingKey {
         case testMode, resumeMappings, buttons
         case wheelEnabled, wheelSpeed, wheelAcceleration, wheelNatural, wheelMode, horizontalDirection
     }
 
-    init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         testMode = try values.decodeIfPresent(Bool.self, forKey: .testMode) ?? true
         resumeMappings = try values.decodeIfPresent(Bool.self, forKey: .resumeMappings) ?? false
@@ -299,23 +307,23 @@ struct Preferences: Codable, Equatable {
             try values.decodeIfPresent(HorizontalDirection.self, forKey: .horizontalDirection) ?? .unchanged
     }
 
-    static let storageKey = "preferences.v1"
-    static func load() -> Preferences {
-        guard let data = UserDefaults.standard.data(forKey: storageKey),
+    package static let storageKey = "preferences.v1"
+    package static func load(defaults: UserDefaults = .standard) -> Preferences {
+        guard let data = defaults.data(forKey: storageKey),
             let value = try? JSONDecoder().decode(Preferences.self, from: data)
         else { return Preferences() }
         return value.normalized()
     }
-    func normalized() -> Preferences {
+    package func normalized() -> Preferences {
         var value = self
         for control in MouseControl.allCases { value.buttons[control] = value.buttons[control].normalized() }
         value.wheelSpeed = clamp(value.wheelSpeed, 0.25...6, fallback: 1)
         value.wheelAcceleration = clamp(value.wheelAcceleration, 0...2, fallback: 1)
         return value
     }
-    func save() {
+    package func save(defaults: UserDefaults = .standard) {
         if let data = try? JSONEncoder().encode(self) {
-            UserDefaults.standard.set(data, forKey: Self.storageKey)
+            defaults.set(data, forKey: Self.storageKey)
         }
     }
 }
@@ -379,19 +387,19 @@ private enum LegacyButtons {
     }
 }
 
-func clamp(_ value: Double, _ range: ClosedRange<Double>, fallback: Double) -> Double {
+package func clamp(_ value: Double, _ range: ClosedRange<Double>, fallback: Double) -> Double {
     value.isFinite ? min(range.upperBound, max(range.lowerBound, value)) : fallback
 }
 
-enum KeyboardOutput {
-    static func send(_ shortcut: Shortcut) -> Bool {
+package enum KeyboardOutput {
+    package static func send(_ shortcut: Shortcut) -> Bool {
         guard AXIsProcessTrusted(), let (down, up) = events(for: shortcut) else { return false }
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
         return true
     }
 
-    static func events(for shortcut: Shortcut) -> (CGEvent, CGEvent)? {
+    package static func events(for shortcut: Shortcut) -> (CGEvent, CGEvent)? {
         guard let source = CGEventSource(stateID: .privateState),
             let down = CGEvent(keyboardEventSource: source, virtualKey: shortcut.keyCode, keyDown: true),
             let up = CGEvent(keyboardEventSource: source, virtualKey: shortcut.keyCode, keyDown: false)

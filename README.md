@@ -8,8 +8,9 @@ A small native macOS app for the MX Master 3S with a **Logi Bolt USB receiver**.
 - **Scroll & navigate**: select this in any drag-direction menu to link all four directions. Hold the button and move the mouse to scroll in two dimensions, with content following your hand like a trackpad. The cursor moves too (replayed from raw mouse movement; native pointer acceleration is not reproduced). Scroll speed is adjustable (25–300%). Uses native phased pixel-scroll events; navigation gestures depend on the receiving app. No momentum or multi-finger desktop gestures.
 - Drag sensitivity (25–300%) and zoom speed (25–600%, initially 200%) are set per button.
 - Main-wheel control: scroll speed (25–600%), natural or standard direction, adjustable acceleration, and ratchet/free-spin modes. Keep current mode preserves existing SmartShift behavior. Initially off.
-- Horizontal thumb-wheel direction: Keep current, Standard, or Reversed. Applies independently of the main wheel and restores the previous direction on Pause or Quit.
+- Horizontal thumb-wheel direction: Keep current, Standard, or Reversed. Applies independently of the main wheel and restores the previous direction on Pause or agent shutdown.
 - Test mode shows actions without sending them; Scroll & navigate still moves the cursor. Pause restores the selected buttons.
+- A lightweight **MX Forward Agent** owns the mouse and menu bar. The settings UI is a separate process: closing its window exits it without stopping mappings. The per-user LaunchAgent starts at login and restarts after a crash.
 - Settings stay editable while mappings are active. Shortcuts and speeds apply immediately; changing selected controls or wheel mode briefly reconnects automatically.
 - Automatic discovery on launch, wake, and reconnect. After you Enable once, mappings resume automatically; an explicit Pause keeps them off.
 
@@ -25,17 +26,35 @@ Requires macOS 14+ and Swift 6 command-line tools. No third-party dependencies.
 ```sh
 cd ~/repos/mx-forward
 swift run ForwardCoreChecks
+swift run AgentChecks
+swift run MXForward --check-proxy
+./scripts/check-agent-launchd.sh
+# Close the settings UI, and stop any installed agent before packaging:
+./scripts/agent-session.sh stop  # only if already installed
 ./scripts/build-app.sh
-open 'dist/MX Forward.app'
+./scripts/install-app.sh
+open '/Applications/MX Forward.app'
 ```
 
-Quit MX Forward before rebuilding. Builds are ad-hoc signed by default; macOS may require you to grant permissions again after a rebuild. Set `MX_FORWARD_SIGN_IDENTITY` to use your signing certificate. Builds are not notarized.
+Stop the agent and close the settings UI before packaging/replacing the bundle. Builds are ad-hoc signed by default; macOS may require you to grant permissions again after a rebuild. Set `MX_FORWARD_SIGN_IDENTITY` to use your signing certificate. Builds are not notarized.
+
+The installer starts the per-user agent without opening or activating the UI. The UI also installs/starts the bundled agent when opened. The job is `~/Library/LaunchAgents/local.baggie.mxforward.agent.plist`; no root daemon is installed. Use the menu bar or **Setup → Stop agent and disable startup** to remove it, or:
+
+```sh
+./scripts/agent-session.sh status
+./scripts/agent-session.sh pause   # restore controls; remain installed
+./scripts/agent-session.sh enable
+./scripts/agent-session.sh stop    # stop and remove login startup
+./scripts/agent-session.sh start   # reinstall/start
+```
+
+See [architecture and lifecycle](docs/architecture.md) for IPC, permissions, recovery, and validation.
 
 ## Headless measurement prototype
 
-This is an experimental build target, **not yet a LaunchAgent or a split UI/IPC implementation**.
+This standalone experimental build target is retained for comparison. **Production now uses the bundled MX Forward Agent and a separate XPC settings UI**, described above.
 It compiles the same mouse engine without SwiftUI, settings windows, shortcut recorder, or zoom-test window.
-AppKit remains available for session notifications and event support. The existing GUI is unchanged.
+AppKit remains available for session notifications and event support. It shares the same `MouseEngine` module as the production agent.
 
 ```sh
 ./scripts/build-headless.sh
@@ -65,7 +84,7 @@ No suspension was reported during this interval. Relative to the earlier closed-
 GUI baseline, this is about **91 MB / 91% less physical footprint**. This is a short
 mappings-enabled sample, not a controlled gesture stress test or a long-term soak test.
 
-For the real comparison, **quit MX Forward completely**, leave Logitech's agent stopped,
+For the real comparison, **quit the settings UI and stop the production agent**, leave Logitech's agent stopped,
 and then run:
 
 ```sh
@@ -76,8 +95,8 @@ Without `--enable` it only discovers the mouse. Live modes read and watch the no
 config but never save settings or change the GUI's persisted resume choice. They start
 from built-in preferences plus that JSON, not the GUI's UserDefaults. The separate executable
 may need its own Accessibility/Input Monitoring permission; check the printed status.
-Do not reopen the GUI while a live prototype is running. The prototype refuses to start
-while the GUI is running and locks out duplicate live prototype instances.
+Do not reopen the settings UI while a live prototype is running. The prototype refuses to start
+while the UI is running; the shared controller lock also excludes the production agent and duplicate live prototypes.
 
 Stop with **Ctrl-C** or `kill -TERM <pid>`; it waits for the current operation and attempts
 native-control restoration before exiting. A failed restoration is printed and returns a
@@ -87,7 +106,7 @@ No service is installed, and no login/startup settings are changed.
 ## Try it
 
 1. In the **Buttons** tab, click a button on the mouse picture. Pick an action for its click, hold, and each drag direction. For **Keyboard shortcut**, click the recorder and press your keys; Escape cancels. **Restore defaults** resets the button. The timing pad previews the hold delay. Settings save automatically.
-2. Add **MX Forward** under **System Settings → Privacy & Security → Accessibility** for live keyboard and zoom actions. Add **Input Monitoring** only if discovery is blocked. Restart after changing permissions if needed.
+2. Add **MX Forward Agent** under **System Settings → Privacy & Security → Accessibility** for live actions. Its app is at `/Applications/MX Forward.app/Contents/Library/LoginItems/MX Forward Agent.app`. Add Input Monitoring only if discovery is blocked. The settings UI (**MX Forward**) may separately need Accessibility to record system shortcuts. The agent refreshes permissions automatically; restart it if macOS requires that.
 3. The app discovers the mouse automatically. Move it to wake it if needed and allow a few seconds. **Discover mouse** remains available for a manual retry.
 4. Stop Logitech's background agent with the command below. Closing the Options+ window is not enough. Its other custom gestures may stop working while the agent is stopped.
 5. Keep **Test mode** on, click **Enable**, then click, hold, and drag each button. The footer shows which action each one would send, such as "Back hold → Mission Control".
@@ -98,7 +117,7 @@ No service is installed, and no login/startup settings are changed.
 
 ```sh
 ./scripts/logitech-session.sh stop
-# Pause or quit MX Forward before restoring Logitech.
+# Pause mappings or stop the agent before restoring Logitech.
 ./scripts/logitech-session.sh start
 ```
 
@@ -135,20 +154,20 @@ Settings are mirrored to `~/.config/mx-forward/config.json`. Every button has th
 - A drag fires one action when movement crosses the drag distance; release before the next one. While a button has any drag action, native pointer movement is diverted while that button is held. Scroll & navigate replays cursor movement and keeps scrolling the content under the initial press; other drag actions keep the pointer still. Buttons without drag actions leave the pointer alone. Holding two buttons with drag actions at once cancels both until they're released.
 - Shortcuts store a keycode and modifiers and target the active app when they fire. Click a shortcut field and press your keys to replace it. Recording temporarily suppresses mouse shortcut and gesture actions; Escape, leaving the window, or disabling the recorder cancels it. System shortcuts are captured before macOS handles them when Accessibility is granted.
 - Editing settings cancels any unfinished mouse gesture or hold, including its release action. Shortcut and speed changes do not release mouse ownership. Selected controls, wheel mode, and horizontal direction reconnect automatically, retaining the enabled state. Editing while explicitly paused leaves mappings paused.
-- Closing the window keeps the app in the menu bar, where you can Pause or Quit.
-- Sleep, disconnect, permission loss, or a restarted Logitech agent suspends the mapping. It reconnects and resumes once the mouse and permissions are available and Logitech's agent is stopped. Explicit Pause disables automatic resume; Enable turns it back on. Quit restores the hardware while preserving this choice for the next launch.
+- Closing the settings window exits the entire UI process, flushing pending edits and releasing any shortcut-recording suppression. The agent stays in the menu bar; Pause restores controls, and Stop agent and disable startup removes its LaunchAgent.
+- Sleep, disconnect, permission loss, or a restarted Logitech agent suspends the mapping. It reconnects and resumes once the mouse and permissions are available and Logitech's agent is stopped. Explicit Pause disables automatic resume; Enable turns it back on. Stopping the agent restores hardware while preserving this choice for the next launch. Quitting only the settings UI leaves mappings running.
 - Main-wheel control reads high-resolution wheel reports directly from Bolt and sends vertical pixel scrolling. At 100% baseline speed, slow scrolling moves 40 pixels per notch. Acceleration estimates wheel speed from notch distance and elapsed time, then smoothly boosts fast spins. At 100% acceleration the maximum boost is 5×; at 200% it is 9×. Pausing for 250 ms, reversing direction, or editing settings clears the boost. This approximates the fast-spin behavior; Logitech’s exact curve has not been measured. Horizontal direction is controlled separately through the thumb wheel’s native hardware setting. Keyboard modifiers are preserved. This does not add inertial scrolling.
-- Pause and Quit restore native main-wheel scrolling and the prior wheel mode/SmartShift threshold, then clear diversion for the selected buttons and preserve their current hardware remap targets. Raw movement reporting is also cleared for every button that used it. Sleep cleanup sends restoration commands without waiting for replies.
+- Pause and agent shutdown restore native main-wheel scrolling and the prior wheel mode/SmartShift threshold, then clear diversion for the selected buttons and preserve their current hardware remap targets. Raw movement reporting is also cleared for every button that used it. Sleep cleanup sends restoration commands without waiting for replies.
 - Zoom uses native magnification and smart-zoom events, not Command-plus/minus. An app must support those gestures. The adapter uses undocumented macOS gesture fields, so compatibility is verified against the installed OS. Zoom speed tunes movement distance; exact Logitech sensitivity has not been measured.
 - On button-feature version 5 and later, the first raw movement report is discarded to avoid the MX Master 3S stale-movement jump. A small dead zone separates clicks from drags.
-- After a crash, forced quit, or failed restoration, **turn the mouse off and on**. The app reconnects automatically; click Enable if you previously paused it.
+- The agent records native hardware settings before changing them and recovers an interrupted session before reclaiming the mouse. If recovery or restoration fails, **turn the mouse off and on**. It reconnects automatically; click Enable if you previously paused it.
 - Bluetooth and other mouse models are not supported. Mac Mouse Fix can keep running, but avoid mapping the same side buttons in both apps.
 
 ## Validation
 
 The 53 core checks cover two-axis drag scrolling, scroll lifecycle and fractional pixels, click, hold, and drag in all four directions, holds cancelled by drags, continuous zoom, cancellation, jitter, the stale first-report filter, signed movement parsing, button reporting, wheel packet decoding, speed/direction, fractional-pixel accumulation, acceleration strength, packet-rate independence, slow-scroll precision, reversals, idle reset, numeric bounds, and horizontal-direction reporting flags. macOS also decodes the generated events as native magnify / smart-magnify events with the expected phases.
 
-Run the optional hardware checks with MX Forward quit, Logitech's device agent stopped, and an awake MX Master 3S connected through Bolt:
+Run the optional hardware checks with the settings UI closed, the agent stopped (`./scripts/agent-session.sh stop`), Logitech's device agent stopped, and an awake MX Master 3S connected through Bolt:
 
 ```sh
 ./scripts/check-hardware.sh

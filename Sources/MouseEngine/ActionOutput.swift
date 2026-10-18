@@ -1,14 +1,14 @@
 import AppKit
 import ForwardCore
 
-enum ActionOutput {
+package enum ActionOutput {
     /// The keys an action presses, or nil when it doesn't press any.
-    static func shortcut(for action: ButtonAction) -> Shortcut? {
+    package static func shortcut(for action: ButtonAction) -> Shortcut? {
         action.kind == .shortcut ? action.shortcut : WindowNavigationOutput.currentShortcut(action.kind)
     }
 
     /// Returns false when macOS refused the event.
-    static func send(_ action: ButtonAction, at point: CGPoint) -> Bool {
+    package static func send(_ action: ButtonAction, at point: CGPoint) -> Bool {
         switch action.kind {
         case .none, .zoom, .scroll: return true
         case .smartZoom: return ZoomOutput.send(.click, at: point)
@@ -33,8 +33,8 @@ enum ActionOutput {
     }
 }
 
-enum ZoomOutput {
-    static func send(_ action: ZoomAction, at point: CGPoint) -> Bool {
+package enum ZoomOutput {
+    package static func send(_ action: ZoomAction, at point: CGPoint) -> Bool {
         guard AXIsProcessTrusted(), let event = ZoomEvent.make(action, at: point) else { return false }
         event.post(tap: .cghidEventTap)
         return true

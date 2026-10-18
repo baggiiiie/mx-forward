@@ -1,14 +1,14 @@
 import AppKit
 import ForwardCore
 
-enum WindowNavigationOutput {
-    static func currentShortcut(_ action: ButtonAction.Kind) -> Shortcut? {
+package enum WindowNavigationOutput {
+    package static func currentShortcut(_ action: ButtonAction.Kind) -> Shortcut? {
         let hotkeys = UserDefaults(suiteName: "com.apple.symbolichotkeys")?
             .dictionary(forKey: "AppleSymbolicHotKeys")
         return shortcut(action, hotkeys: hotkeys)
     }
 
-    static func shortcut(
+    package static func shortcut(
         _ action: ButtonAction.Kind, hotkeys: [String: Any]?
     ) -> Shortcut? {
         let id: String

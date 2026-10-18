@@ -2,10 +2,10 @@ import ForwardCore
 import Foundation
 import IOKit.hid
 
-enum MouseError: LocalizedError {
+package enum MouseError: LocalizedError {
     case message(String)
     case timeout
-    var errorDescription: String? {
+    package var errorDescription: String? {
         switch self {
         case .message(let text): return text
         case .timeout: return "Mouse response timed out"
@@ -15,8 +15,8 @@ enum MouseError: LocalizedError {
 
 /// Talks to the Bolt receiver on the main run loop.
 @MainActor
-final class BoltMouse {
-    struct Connection: Equatable {
+package final class BoltMouse {
+    package struct Connection: Equatable {
         let endpoint: UInt
         let slot: UInt8
         let feature: UInt8
@@ -33,18 +33,31 @@ final class BoltMouse {
         let address: UInt8
         let continuation: CheckedContinuation<HIDPacket, Error>
     }
+    private let recoveryURL: URL?
+
+    package init(recoveryURL: URL? = nil) { self.recoveryURL = recoveryURL }
+
+    deinit {
+        if let manager {
+            IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
+            IOHIDManagerClose(manager, 0)
+        }
+        for device in devices.values { IOHIDDeviceClose(device, 0) }
+    }
+
     private var manager: IOHIDManager?
     private var devices: [UInt: IOHIDDevice] = [:]
     private var pending: [UUID: Pending] = [:]
     private var probes: [UInt: Task<Void, Never>] = [:]
     private var probeGenerations: [UInt: UUID] = [:]
     private var nextSoftwareID: UInt8 = 8
-    private(set) var connection: Connection?
+    package private(set) var connection: Connection?
+    package private(set) var recoveryPending = false
     private var claims: [MouseControl: ControlReporting] = [:]
     private var movementClaims = Set<MouseControl>()
-    private struct WheelClaim {
-        let feature: UInt8
-        let shiftFeature: UInt8
+    private struct WheelClaim: Codable {
+        var feature: UInt8
+        var shiftFeature: UInt8
         let multiplier: UInt8
         let originalMode: UInt8
         let originalShift: [UInt8]
@@ -58,15 +71,15 @@ final class BoltMouse {
         let inverted: Bool
     }
     private var horizontalClaim: HorizontalClaim?
-    var claimed: Bool { !claims.isEmpty || wheelClaim != nil || horizontalClaim != nil }
-    var onStatus: (String) -> Void = { _ in }
-    var onPress: (MouseControl, Bool) -> Void = { _, _ in }
-    var onMovement: (Int16, Int16) -> Void = { _, _ in }
-    var onScroll: (WheelScroll, UInt8) -> Void = { _, _ in }
-    var onDisconnect: () -> Void = {}
-    var onLog: (String) -> Void = { _ in }
+    package var claimed: Bool { !claims.isEmpty || wheelClaim != nil || horizontalClaim != nil }
+    package var onStatus: (String) -> Void = { _ in }
+    package var onPress: (MouseControl, Bool) -> Void = { _, _ in }
+    package var onMovement: (Int16, Int16) -> Void = { _, _ in }
+    package var onScroll: (WheelScroll, UInt8) -> Void = { _, _ in }
+    package var onDisconnect: () -> Void = {}
+    package var onLog: (String) -> Void = { _ in }
 
-    func start() throws {
+    package func start() throws {
         if manager != nil {
             rescan()
             return
@@ -124,12 +137,12 @@ final class BoltMouse {
         onStatus("Looking for your MX Master 3S…")
     }
 
-    func rescan() {
+    package func rescan() {
         guard !claimed, connection == nil else { return }
         for key in devices.keys where probes[key] == nil { beginProbe(key) }
     }
 
-    func forgetConnection() {
+    package func forgetConnection() {
         guard !claimed else { return }
         for task in probes.values { task.cancel() }
         probes.removeAll()
@@ -207,6 +220,11 @@ final class BoltMouse {
                         endpoint: id, slot: slot, feature: index,
                         discardFirstMovement: special.payload[2] >= 5, availableControls: availableControls,
                         movementControls: movementControls)
+                    do { try await self.recoverInterruptedSession() }
+                    catch {
+                        self.onStatus("Recovery pending: \(error.localizedDescription). Retry Pause, or power-cycle the mouse.")
+                        return
+                    }
                     self.onStatus("\(name) connected · Bolt slot \(slot)")
                     self.onLog(
                         "Available buttons: \(availableControls.sorted().map(\.name).joined(separator: ", "))"
@@ -234,7 +252,7 @@ final class BoltMouse {
         return response.payload[0]
     }
 
-    func claim(
+    package func claim(
         _ controls: Set<MouseControl>, movement: Set<MouseControl> = [], wheelMode: WheelMode? = nil,
         horizontalInverted: Bool? = nil
     ) async throws {
@@ -264,6 +282,7 @@ final class BoltMouse {
                 let rawMovement = movement.contains(control)
                 claims[control] = settings
                 if rawMovement { movementClaims.insert(control) }
+                try saveRecovery(c)
                 _ = try await request(
                     c.endpoint, c.slot, c.feature, 3,
                     settings.parameters(divert: true, rawMovement: rawMovement))
@@ -284,7 +303,7 @@ final class BoltMouse {
         }
     }
 
-    func release() async throws {
+    package func release() async throws {
         guard claimed, let c = connection else { return }
         var failure: Error?
         if horizontalClaim != nil {
@@ -308,11 +327,13 @@ final class BoltMouse {
                 onLog("Restored \(control.name)")
             } catch { failure = failure ?? error }
         }
+        try saveRecovery(c)
+        if !claimed { recoveryPending = false }
         if let failure { throw failure }
     }
 
     /// Sleep cleanup cannot wait for a reply on the main run loop.
-    func releaseImmediately() -> Bool {
+    package func releaseImmediately() -> Bool {
         guard let c = connection, let device = devices[c.endpoint] else { return !claimed }
         if let horizontal = horizontalClaim,
             writeImmediately(
@@ -342,7 +363,7 @@ final class BoltMouse {
         return !claimed
     }
 
-    func verifyClaim() async throws -> Bool {
+    package func verifyClaim() async throws -> Bool {
         guard claimed, let c = connection else { return false }
         for control in claims.keys.sorted() {
             guard let original = claims[control] else { return false }
@@ -494,6 +515,7 @@ extension BoltMouse {
             originalShift: Array(currentShift.payload.prefix(2)),
             desiredMode: (currentMode.payload[0] | 3) & ~4, desiredShift: desiredShift)
         wheelClaim = settings
+        try saveRecovery(c)
         if let desiredShift {
             _ = try await request(c.endpoint, c.slot, shift, 1, desiredShift)
         }
@@ -567,6 +589,7 @@ extension BoltMouse {
         let original = try await readHorizontal(c, feature: index)
         guard connection == c else { throw MouseError.message("Mouse connection changed. Reconnect.") }
         horizontalClaim = HorizontalClaim(feature: index, original: original, inverted: inverted)
+        try saveRecovery(c)
         let desired = original.parameters(inverted: inverted)
         _ = try await request(c.endpoint, c.slot, index, 2, desired)
         let confirmed = try await readHorizontal(c, feature: index)
@@ -587,5 +610,78 @@ extension BoltMouse {
         }
         horizontalClaim = nil
         onLog("Restored horizontal scrolling")
+    }
+}
+
+extension BoltMouse {
+    private struct Recovery: Codable {
+        var slot: UInt8
+        var controls: [UInt16]
+        var wheel: WheelClaim?
+        var horizontalOriginal: [UInt8]?
+        var horizontalInverted: Bool?
+    }
+
+    /// Write ahead of every hardware mutation. A restarted agent must not mistake
+    /// diverted wheel/SmartShift settings for the user's native configuration.
+    private func saveRecovery(_ c: Connection) throws {
+        guard let recoveryURL, connection == c else { return }
+        if !claimed {
+            if FileManager.default.fileExists(atPath: recoveryURL.path) {
+                try FileManager.default.removeItem(at: recoveryURL)
+            }
+            return
+        }
+        let recovery = Recovery(
+            slot: c.slot, controls: claims.keys.map(\.rawValue), wheel: wheelClaim,
+            horizontalOriginal: horizontalClaim?.original.bytes,
+            horizontalInverted: horizontalClaim?.inverted)
+        try FileManager.default.createDirectory(at: recoveryURL.deletingLastPathComponent(),
+                                               withIntermediateDirectories: true)
+        try JSONEncoder().encode(recovery).write(to: recoveryURL, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: recoveryURL.path)
+    }
+
+    private func recoverInterruptedSession() async throws {
+        guard let recoveryURL, let c = connection,
+            FileManager.default.fileExists(atPath: recoveryURL.path) else { return }
+        recoveryPending = true
+        let data = try Data(contentsOf: recoveryURL)
+        guard data.count < 65536 else { throw MouseError.message("Hardware recovery file is too large") }
+        let saved = try JSONDecoder().decode(Recovery.self, from: data)
+        guard saved.slot == c.slot else {
+            throw MouseError.message("Interrupted session belongs to another Bolt slot")
+        }
+        var recoveredClaims: [MouseControl: ControlReporting] = [:]
+        var recoveredWheel: WheelClaim?
+        var recoveredHorizontal: HorizontalClaim?
+        for id in saved.controls {
+            guard let control = MouseControl(rawValue: id), c.availableControls.contains(control) else { continue }
+            recoveredClaims[control] = try await readReporting(control, c)
+        }
+        if var wheel = saved.wheel {
+            guard wheel.originalShift.count == 2, wheel.desiredShift == nil || wheel.desiredShift?.count == 2 else {
+                throw MouseError.message("Invalid saved wheel settings")
+            }
+            wheel.feature = try await feature(0x2121, c.endpoint, c.slot)
+            wheel.shiftFeature = try await feature(0x2110, c.endpoint, c.slot)
+            recoveredWheel = wheel
+        }
+        if let bytes = saved.horizontalOriginal {
+            guard let original = ThumbWheelReporting(bytes) else {
+                throw MouseError.message("Invalid saved thumb-wheel settings")
+            }
+            let index = try await feature(0x2150, c.endpoint, c.slot)
+            recoveredHorizontal = HorizontalClaim(feature: index, original: original,
+                                                  inverted: saved.horizontalInverted ?? original.inverted)
+        }
+        claims = recoveredClaims
+        wheelClaim = recoveredWheel
+        horizontalClaim = recoveredHorizontal
+        try await release()
+        // An empty journal is also removed by successful recovery.
+        try saveRecovery(c)
+        recoveryPending = false
+        onLog("Recovered native controls from the interrupted agent session")
     }
 }
