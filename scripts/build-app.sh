@@ -23,7 +23,7 @@ for path, identifier, name, executable, agent in [
 ]:
     info = dict(CFBundleIdentifier=identifier, CFBundleName=name, CFBundleDisplayName=name,
                 CFBundleExecutable=executable, CFBundlePackageType='APPL',
-                CFBundleShortVersionString='0.7.0', CFBundleVersion='11',
+                CFBundleShortVersionString='0.7.1', CFBundleVersion='12',
                 LSMinimumSystemVersion='14.0', NSHighResolutionCapable=True,
                 NSInputMonitoringUsageDescription='Read Logitech Bolt mouse buttons and held movement for mappings.')
     if agent: info['LSUIElement'] = True

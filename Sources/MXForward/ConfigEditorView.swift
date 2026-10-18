@@ -1,5 +1,6 @@
-import MouseEngine
 import AppKit
+import MouseEngine
+import SettingsClient
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -12,7 +13,7 @@ final class ConfigEditorState: ObservableObject {
 }
 
 struct ConfigEditorView: View {
-    @ObservedObject var model: AppModel
+    @ObservedObject var model: SettingsModel
     @ObservedObject var state: ConfigEditorState
 
     var body: some View {
@@ -20,21 +21,16 @@ struct ConfigEditorView: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
                     Image(systemName: "curlybraces").foregroundStyle(.secondary)
-                    Text(
-                        model.configURL.map { ($0.path as NSString).abbreviatingWithTildeInPath }
-                            ?? "Not saved to a file"
-                    )
-                    .font(.callout.monospaced()).foregroundStyle(.secondary)
-                    .textSelection(.enabled).lineLimit(1).truncationMode(.middle)
+                    Text((model.configURL.path as NSString).abbreviatingWithTildeInPath)
+                        .font(.callout.monospaced()).foregroundStyle(.secondary)
+                        .textSelection(.enabled).lineLimit(1).truncationMode(.middle)
                     Spacer()
-                    if let url = model.configURL {
-                        Button("Open in Editor") { NSWorkspace.shared.open(url) }
-                        Button {
-                            NSWorkspace.shared.activateFileViewerSelecting([url])
-                        } label: {
-                            Image(systemName: "folder")
-                        }.help("Show in Finder")
-                    }
+                    Button("Open in Editor") { NSWorkspace.shared.open(model.configURL) }
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([model.configURL])
+                    } label: {
+                        Image(systemName: "folder")
+                    }.help("Show in Finder")
                     Menu("More") {
                         Button("Import…", action: importFile)
                         Button("Export…", action: exportFile)

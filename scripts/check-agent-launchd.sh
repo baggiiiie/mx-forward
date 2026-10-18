@@ -1,5 +1,5 @@
 #!/bin/bash
-# Isolated launchd/XPC/restart test. No HID, real preferences, or windows.
+# Test a temporary login agent without touching the mouse or real preferences.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 swift build --product MXForwardAgent
@@ -26,12 +26,14 @@ MX_FORWARD_AGENT_TEST_SERVICE="$service" "$agent" --status > "$check_dir/status.
 /usr/bin/python3 - "$check_dir/status.json" <<'PY'
 import json, sys
 r = json.load(open(sys.argv[1]))
-assert r['version'] == 1 and not r.get('error')
+assert r['version'] == 2 and not r.get('error')
 assert not r['state']['enabled'] and not r['state']['connected']
 PY
 pid="$(launchctl print "$domain/$service" | awk '/pid =/ {print $3; exit}')"
 test -n "$pid"
-# Intentional crash of a hardware-disabled test process ONLY.
+launchctl kickstart "$domain/$service"
+test "$(launchctl print "$domain/$service" | awk '/pid =/ {print $3; exit}')" = "$pid"
+# Only this hardware-disabled test process is killed.
 kill -KILL "$pid"
 sleep 2
 MX_FORWARD_AGENT_TEST_SERVICE="$service" "$agent" --status > "$check_dir/restarted.json"

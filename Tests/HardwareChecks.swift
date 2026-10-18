@@ -75,7 +75,8 @@ private enum HardwareChecks {
                 "Scroll output lost pixel distance or changed horizontal scrolling")
         }
         print("PASS: macOS decodes precise vertical scroll events in both directions")
-        let recoveryDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let recoveryDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString)
         try FileManager.default.createDirectory(at: recoveryDirectory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: recoveryDirectory) }
         let recoveryURL = recoveryDirectory.appendingPathComponent("hardware-restore.json")
@@ -97,10 +98,14 @@ private enum HardwareChecks {
             for mode in WheelMode.allCases {
                 try await mouse.claim([], wheelMode: mode)
                 try require(try await mouse.verifyClaim(), "Wheel-only claim was not confirmed")
-                try require(FileManager.default.fileExists(atPath: recoveryURL.path), "Missing write-ahead recovery journal")
+                try require(
+                    FileManager.default.fileExists(atPath: recoveryURL.path),
+                    "Missing write-ahead recovery journal")
                 try await mouse.release()
                 try require(!mouse.claimed, "Wheel-only release failed")
-                try require(!FileManager.default.fileExists(atPath: recoveryURL.path), "Successful release left a stale journal")
+                try require(
+                    !FileManager.default.fileExists(atPath: recoveryURL.path),
+                    "Successful release left a stale journal")
                 print("PASS: main wheel \(mode.label) is applied, verified, and restored")
             }
             for inverted in [true, false, true] {
@@ -112,7 +117,9 @@ private enum HardwareChecks {
             print("PASS: horizontal direction reverses and restores the original native settings")
             try await mouse.claim([.forward], wheelMode: .ratchet, horizontalInverted: true)
             try require(mouse.releaseImmediately(), "Immediate sleep-style restoration failed")
-            try require(FileManager.default.fileExists(atPath: recoveryURL.path), "Unconfirmed restoration removed its recovery journal")
+            try require(
+                FileManager.default.fileExists(atPath: recoveryURL.path),
+                "Unconfirmed restoration removed its recovery journal")
             let recovered = BoltMouse(recoveryURL: recoveryURL)
             try recovered.start()
             try await waitFor {
@@ -273,7 +280,7 @@ private enum HardwareChecks {
 
             await model.enable()
             try require(model.enabled, "Could not re-enable for the quit check")
-            let mayQuit = await model.quitSafely()
+            let mayQuit = await model.shutdown()
             try require(
                 mayQuit && !model.enabled && !model.needsRelease, "Quit failed to restore the buttons")
             try require(Preferences.load().resumeMappings, "Quit lost the saved resume setting")

@@ -27,7 +27,7 @@ Requires macOS 14+ and Swift 6 command-line tools. No third-party dependencies.
 cd ~/repos/mx-forward
 swift run ForwardCoreChecks
 swift run AgentChecks
-swift run MXForward --check-proxy
+swift run ProxyChecks
 ./scripts/check-agent-launchd.sh
 # Close the settings UI, and stop any installed agent before packaging:
 ./scripts/agent-session.sh stop  # only if already installed
@@ -50,58 +50,25 @@ The installer starts the per-user agent without opening or activating the UI. Th
 
 See [architecture and lifecycle](docs/architecture.md) for IPC, permissions, recovery, and validation.
 
-## Headless measurement prototype
+## Memory usage
 
-This standalone experimental build target is retained for comparison. **Production now uses the bundled MX Forward Agent and a separate XPC settings UI**, described above.
-It compiles the same mouse engine without SwiftUI, settings windows, shortcut recorder, or zoom-test window.
-AppKit remains available for session notifications and event support. It shares the same `MouseEngine` module as the production agent.
+The original combined app used about **100 MB** with its settings window closed.
+The first headless prototype used **8.7–8.8 MB with mappings active**. The finished
+agent, including its native menu bar, measured **13 MB connected** before its new
+Accessibility permission was granted. These were short samples, not long-term budgets.
 
-```sh
-./scripts/build-headless.sh
-./scripts/build-headless.sh --check  # hardware-free isolation/regression checks
-.build/headless/MXForwardHeadless --offline
-```
-
-`--offline` constructs the engine and runs its monitoring tasks, but never opens HID devices,
-reads the config file, or claims controls. It can run alongside the GUI for a baseline.
-Measure it in another terminal:
+Close the settings UI and sample the installed agent:
 
 ```sh
-footprint -p "$(pgrep -x MXForwardHeadless)" --noCategories
-ps -p "$(pgrep -x MXForwardHeadless)" -o pid,%cpu,rss
+pid=$(launchctl print "gui/$(id -u)/local.baggie.mxforward.agent" | awk '/pid =/ {print $3; exit}')
+footprint -p "$pid" --noCategories
+ps -p "$pid" -o pid,%cpu,rss
 ```
 
-An initial optimized-build measurement on this Mac was **7.6 MB physical footprint** and
-0.0% CPU in four snapshots, versus about **100 MB** for the existing GUI after closing its
-window. This is **not an active-mouse comparison**: receiver discovery, claims, event output,
-permissions, and activity can increase the headless footprint. The GUI measurement also
-included prior window use. These numbers establish feasibility, not a guaranteed saving.
-
-A subsequent live run, after granting Accessibility and Input Monitoring, connected to
-Bolt slot 2 and enabled the normal JSON mappings with Test mode off. Six samples over
-25 seconds measured **8.7–8.8 MB physical footprint**, about **37 MB RSS**, and **0.0–0.4% CPU**.
-No suspension was reported during this interval. Relative to the earlier closed-window
-GUI baseline, this is about **91 MB / 91% less physical footprint**. This is a short
-mappings-enabled sample, not a controlled gesture stress test or a long-term soak test.
-
-For the real comparison, **quit the settings UI and stop the production agent**, leave Logitech's agent stopped,
-and then run:
-
-```sh
-.build/headless/MXForwardHeadless --enable
-```
-
-Without `--enable` it only discovers the mouse. Live modes read and watch the normal JSON
-config but never save settings or change the GUI's persisted resume choice. They start
-from built-in preferences plus that JSON, not the GUI's UserDefaults. The separate executable
-may need its own Accessibility/Input Monitoring permission; check the printed status.
-Do not reopen the settings UI while a live prototype is running. The prototype refuses to start
-while the UI is running; the shared controller lock also excludes the production agent and duplicate live prototypes.
-
-Stop with **Ctrl-C** or `kill -TERM <pid>`; it waits for the current operation and attempts
-native-control restoration before exiting. A failed restoration is printed and returns a
-nonzero exit status; power-cycle the mouse if needed. Never use SIGKILL for normal shutdown.
-No service is installed, and no login/startup settings are changed.
+Use physical footprint rather than adding up framework sizes. Keep Test mode and
+mappings unchanged when comparing samples. The old measurement executable has been
+removed; `swift run MXForwardAgent --offline` provides a hardware-free baseline
+without installing a service or creating a menu bar.
 
 ## Try it
 
@@ -154,7 +121,7 @@ Settings are mirrored to `~/.config/mx-forward/config.json`. Every button has th
 - A drag fires one action when movement crosses the drag distance; release before the next one. While a button has any drag action, native pointer movement is diverted while that button is held. Scroll & navigate replays cursor movement and keeps scrolling the content under the initial press; other drag actions keep the pointer still. Buttons without drag actions leave the pointer alone. Holding two buttons with drag actions at once cancels both until they're released.
 - Shortcuts store a keycode and modifiers and target the active app when they fire. Click a shortcut field and press your keys to replace it. Recording temporarily suppresses mouse shortcut and gesture actions; Escape, leaving the window, or disabling the recorder cancels it. System shortcuts are captured before macOS handles them when Accessibility is granted.
 - Editing settings cancels any unfinished mouse gesture or hold, including its release action. Shortcut and speed changes do not release mouse ownership. Selected controls, wheel mode, and horizontal direction reconnect automatically, retaining the enabled state. Editing while explicitly paused leaves mappings paused.
-- Closing the settings window exits the entire UI process, flushing pending edits and releasing any shortcut-recording suppression. The agent stays in the menu bar; Pause restores controls, and Stop agent and disable startup removes its LaunchAgent.
+- Closing the settings window saves pending edits and exits the UI process. If saving fails, quitting is cancelled so the edits aren't lost. The agent stays in the menu bar; Pause restores controls, and Stop agent and disable startup removes its LaunchAgent.
 - Sleep, disconnect, permission loss, or a restarted Logitech agent suspends the mapping. It reconnects and resumes once the mouse and permissions are available and Logitech's agent is stopped. Explicit Pause disables automatic resume; Enable turns it back on. Stopping the agent restores hardware while preserving this choice for the next launch. Quitting only the settings UI leaves mappings running.
 - Main-wheel control reads high-resolution wheel reports directly from Bolt and sends vertical pixel scrolling. At 100% baseline speed, slow scrolling moves 40 pixels per notch. Acceleration estimates wheel speed from notch distance and elapsed time, then smoothly boosts fast spins. At 100% acceleration the maximum boost is 5×; at 200% it is 9×. Pausing for 250 ms, reversing direction, or editing settings clears the boost. This approximates the fast-spin behavior; Logitech’s exact curve has not been measured. Horizontal direction is controlled separately through the thumb wheel’s native hardware setting. Keyboard modifiers are preserved. This does not add inertial scrolling.
 - Pause and agent shutdown restore native main-wheel scrolling and the prior wheel mode/SmartShift threshold, then clear diversion for the selected buttons and preserve their current hardware remap targets. Raw movement reporting is also cleared for every button that used it. Sleep cleanup sends restoration commands without waiting for replies.

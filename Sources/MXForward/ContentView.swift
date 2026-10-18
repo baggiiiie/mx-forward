@@ -1,6 +1,7 @@
-import MouseEngine
 import AppKit
 import ForwardCore
+import MouseEngine
+import SettingsClient
 import SwiftUI
 
 enum MainTab: String, CaseIterable, Identifiable {
@@ -16,7 +17,7 @@ final class WindowState: ObservableObject {
 }
 
 struct ContentView: View {
-    @ObservedObject var model: AppModel
+    @ObservedObject var model: SettingsModel
     @StateObject private var window = WindowState()
     @StateObject private var editor = ConfigEditorState()
 
@@ -158,7 +159,7 @@ private struct Banner: View {
 }
 
 struct SetupView: View {
-    @ObservedObject var model: AppModel
+    @ObservedObject var model: SettingsModel
 
     var body: some View {
         Form {
@@ -170,7 +171,7 @@ struct SetupView: View {
                     Text("Move the mouse to wake it if discovery stalls.").foregroundStyle(.secondary)
                     Spacer()
                     Button("Discover mouse") { model.discover() }
-                        .disabled(model.enabled || model.busy || model.needsRelease)
+                        .disabled(!model.agentAvailable || model.enabled || model.busy || model.needsRelease)
                 }
             }
             Section {
@@ -200,8 +201,10 @@ struct SetupView: View {
                     .font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
             }
             Section("Background agent") {
-                Text("The agent starts at login and restarts after a crash. Pause restores native controls without stopping the agent.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text(
+                    "The agent starts at login and restarts after a crash. Pause restores native controls without stopping the agent."
+                )
+                .font(.caption).foregroundStyle(.secondary)
                 Button("Start or reconnect agent") { model.reconnectAgent() }
                 Button("Stop agent and disable startup", role: .destructive) {
                     Task { await model.uninstallAgent() }

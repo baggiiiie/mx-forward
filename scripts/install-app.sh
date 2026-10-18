@@ -1,10 +1,11 @@
 #!/bin/bash
-# Install/update only after all hardware owners have completed cleanup.
+# Stop the old agent before replacing its app bundle.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source_app="$PWD/dist/MX Forward.app"
-destination="${1:-/Applications/MX Forward.app}"
-if [ ! -x "$source_app/Contents/MacOS/MXForward" ]; then
+destination="$(/usr/bin/python3 -c 'import os, sys; print(os.path.abspath(os.path.expanduser(sys.argv[1])))' "${1:-/Applications/MX Forward.app}")"
+if [ ! -x "$source_app/Contents/MacOS/MXForward" ] || \
+   [ ! -x "$source_app/Contents/Library/LoginItems/MX Forward Agent.app/Contents/MacOS/MXForwardAgent" ]; then
   printf 'Run ./scripts/build-app.sh first.\n' >&2; exit 1
 fi
 for name in MXForward MXForwardHeadless; do
@@ -12,6 +13,7 @@ for name in MXForward MXForwardHeadless; do
     printf 'Quit %s before installing.\n' "$name" >&2; exit 1
   fi
 done
+/usr/bin/codesign --verify --deep --strict "$source_app"
 job="gui/$(id -u)/local.baggie.mxforward.agent"
 if launchctl print "$job" >/dev/null 2>&1; then
   launchctl bootout "$job"

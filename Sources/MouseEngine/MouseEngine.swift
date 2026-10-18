@@ -5,13 +5,11 @@ import IOKit.hid
 
 @MainActor
 package final class MouseEngine: ObservableObject {
-    @Published package var preferences = Preferences.load() {
+    @Published package var preferences: Preferences {
         didSet {
             settingsChanged(from: oldValue)
         }
     }
-    @Published package var diagnostics = false
-    @Published package var testResult = "Hold the test pad to try the timing. No actions are sent."
     @Published package var status = "Ready to discover your mouse"
     @Published package var lastAction = "No button activity yet"
     @Published package private(set) var log: [String] = []
@@ -25,7 +23,7 @@ package final class MouseEngine: ObservableObject {
     @Published package private(set) var needsRelease = false
     @Published package private(set) var heldControls = Set<MouseControl>()
     @Published package private(set) var configError: String?
-    package let configURL: URL?
+    private let configURL: URL?
     private var configModified: Date?
     private var configTask: Task<Void, Never>?
     private let mouse: BoltMouse
@@ -65,7 +63,7 @@ package final class MouseEngine: ObservableObject {
         self.startsHardware = startsHardware
         self.persistsSettings = persistsSettings
         self.preferenceStore = preferenceStore
-        if let initialPreferences { self.preferences = initialPreferences }
+        self.preferences = initialPreferences ?? Preferences.load(defaults: preferenceStore)
         mouse.onStatus = { [weak self] text in
             guard let self else { return }
             self.status = text
@@ -182,14 +180,15 @@ package final class MouseEngine: ObservableObject {
         if !enabled && canEnable { await enable() }
     }
 
-    /// Applies JSON from the editor or an imported file, then saves the full config to disk.
-    package func applyConfig(_ text: String) throws {
-        let next = try ConfigJSON.apply(text, to: preferences)
-        if next != preferences {
-            preferences = next
-            append("Applied JSON configuration")
+    /// Keep the old settings if the new ones can't be saved.
+    package func updatePreferences(_ edited: Preferences, from base: Preferences) throws {
+        syncConfigFile()
+        let previous = preferences
+        preferences = preferences.applyingEdits(from: base, to: edited)
+        if let error = configError {
+            preferences = previous
+            throw MouseError.message(error)
         }
-        writeConfigFile(force: true)
     }
 
     package func rewriteConfigFile() { writeConfigFile(force: true) }
@@ -224,9 +223,17 @@ package final class MouseEngine: ObservableObject {
     private func writeConfigFile(force: Bool = false) {
         guard persistsSettings, let url = configURL else { return }
         if !force, let text = try? String(contentsOf: url, encoding: .utf8) {
-            // Don't overwrite a file the user is still fixing.
-            guard let current = try? ConfigJSON.apply(text, to: preferences), current != preferences
-            else { return }
+            do {
+                let current = try ConfigJSON.apply(text, to: preferences)
+                if current == preferences {
+                    configError = nil
+                    return
+                }
+            } catch {
+                // Leave a broken file alone so the user can fix it.
+                configError = error.localizedDescription
+                return
+            }
         }
         do {
             try FileManager.default.createDirectory(
@@ -279,6 +286,7 @@ package final class MouseEngine: ObservableObject {
             return
         }
         if mouse.recoveryPending {
+            guard !mouse.isDiscovering else { return }
             mouse.forgetConnection()
             connected = false
         }
@@ -340,7 +348,9 @@ package final class MouseEngine: ObservableObject {
     }
 
     package func enable() async {
-        guard startsHardware, !busy, !enabled, !needsRelease, !sleeping, !quitting else { return }
+        guard startsHardware, !busy, !enabled, !needsRelease, !sleeping, !quitting,
+            !mouse.recoveryPending
+        else { return }
         refreshPermissions()
         guard !logitechRunning else {
             status = "Stop Logitech's background agent before enabling."
@@ -542,9 +552,11 @@ package final class MouseEngine: ObservableObject {
         }
     }
 
-    /// Graceful shutdown never changes the user's persisted Enable/Pause choice.
+    /// Stop input and restore the mouse without changing the saved Enable/Pause choice.
     package func shutdown() async -> Bool {
         quitting = true
+        enabled = false
+        appliedConfiguration = nil
         operationEpoch += 1
         monitorTask?.cancel()
         configTask?.cancel()
@@ -552,20 +564,16 @@ package final class MouseEngine: ObservableObject {
         for observer in wakeObservers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
         wakeObservers.removeAll()
         cancelInput()
+        await mouse.stopDiscovery()
         let deadline = ContinuousClock.now + .seconds(20)
-        while busy && ContinuousClock.now < deadline {
+        while busy && ContinuousClock.now < deadline && !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(50))
         }
-        if busy { return mouse.releaseImmediately() }
+        if busy {
+            let restored = mouse.releaseImmediately()
+            return restored && !mouse.recoveryPending
+        }
         await suspend(reason: "Stopped · buttons returned to the mouse")
-        return !mouse.claimed
-    }
-
-    package func quitSafely(showAlert: Bool = true) async -> Bool {
-        quitting = true
-        defer { quitting = false }
-        await suspend(reason: "Stopped · buttons returned to the mouse")
-        if !mouse.claimed { return true }
-        return false
+        return !mouse.claimed && !mouse.recoveryPending
     }
 }

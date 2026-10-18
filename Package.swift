@@ -7,17 +7,22 @@ let package = Package(
     products: [
         .executable(name: "MXForward", targets: ["MXForward"]),
         .executable(name: "MXForwardAgent", targets: ["MXForwardAgent"]),
-        .executable(name: "MXForwardHeadless", targets: ["HeadlessPrototype"]),
     ],
     targets: [
         .target(name: "ForwardCore"),
         .target(name: "MouseEngine", dependencies: ["ForwardCore"]),
         .target(name: "AgentSupport", dependencies: ["MouseEngine", "ForwardCore"]),
-        .executableTarget(name: "MXForward", dependencies: ["ForwardCore", "MouseEngine", "AgentSupport"]),
+        .target(name: "SettingsClient", dependencies: ["ForwardCore", "MouseEngine", "AgentSupport"]),
+        .executableTarget(name: "MXForward", dependencies: ["ForwardCore", "MouseEngine", "SettingsClient"]),
         .executableTarget(name: "MXForwardAgent", dependencies: ["MouseEngine", "AgentSupport"]),
-        .executableTarget(name: "HeadlessPrototype", dependencies: ["MouseEngine"]),
+        .target(name: "CheckSupport", dependencies: ["AgentSupport"], path: "Tests/CheckSupport"),
         .executableTarget(
-            name: "AgentChecks", dependencies: ["MouseEngine", "AgentSupport", "ForwardCore"],
+            name: "ProxyChecks",
+            dependencies: ["SettingsClient", "MouseEngine", "AgentSupport", "CheckSupport"],
+            path: "Tests/ProxyChecks"),
+        .executableTarget(
+            name: "AgentChecks",
+            dependencies: ["MouseEngine", "AgentSupport", "ForwardCore", "CheckSupport"],
             path: "Tests/AgentChecks"),
         .executableTarget(
             name: "ForwardCoreChecks", dependencies: ["ForwardCore"], path: "Tests/ForwardCoreTests"),

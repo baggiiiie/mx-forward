@@ -1,6 +1,6 @@
-import MouseEngine
 import AppKit
 import ForwardCore
+import MouseEngine
 
 @MainActor
 final class ZoomTestWindow: NSWindowController {
