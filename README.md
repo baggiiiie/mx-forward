@@ -31,6 +31,59 @@ open 'dist/MX Forward.app'
 
 Quit MX Forward before rebuilding. Builds are ad-hoc signed by default; macOS may require you to grant permissions again after a rebuild. Set `MX_FORWARD_SIGN_IDENTITY` to use your signing certificate. Builds are not notarized.
 
+## Headless measurement prototype
+
+This is an experimental build target, **not yet a LaunchAgent or a split UI/IPC implementation**.
+It compiles the same mouse engine without SwiftUI, settings windows, shortcut recorder, or zoom-test window.
+AppKit remains available for session notifications and event support. The existing GUI is unchanged.
+
+```sh
+./scripts/build-headless.sh
+./scripts/build-headless.sh --check  # hardware-free isolation/regression checks
+.build/headless/MXForwardHeadless --offline
+```
+
+`--offline` constructs the engine and runs its monitoring tasks, but never opens HID devices,
+reads the config file, or claims controls. It can run alongside the GUI for a baseline.
+Measure it in another terminal:
+
+```sh
+footprint -p "$(pgrep -x MXForwardHeadless)" --noCategories
+ps -p "$(pgrep -x MXForwardHeadless)" -o pid,%cpu,rss
+```
+
+An initial optimized-build measurement on this Mac was **7.6 MB physical footprint** and
+0.0% CPU in four snapshots, versus about **100 MB** for the existing GUI after closing its
+window. This is **not an active-mouse comparison**: receiver discovery, claims, event output,
+permissions, and activity can increase the headless footprint. The GUI measurement also
+included prior window use. These numbers establish feasibility, not a guaranteed saving.
+
+A subsequent live run, after granting Accessibility and Input Monitoring, connected to
+Bolt slot 2 and enabled the normal JSON mappings with Test mode off. Six samples over
+25 seconds measured **8.7–8.8 MB physical footprint**, about **37 MB RSS**, and **0.0–0.4% CPU**.
+No suspension was reported during this interval. Relative to the earlier closed-window
+GUI baseline, this is about **91 MB / 91% less physical footprint**. This is a short
+mappings-enabled sample, not a controlled gesture stress test or a long-term soak test.
+
+For the real comparison, **quit MX Forward completely**, leave Logitech's agent stopped,
+and then run:
+
+```sh
+.build/headless/MXForwardHeadless --enable
+```
+
+Without `--enable` it only discovers the mouse. Live modes read and watch the normal JSON
+config but never save settings or change the GUI's persisted resume choice. They start
+from built-in preferences plus that JSON, not the GUI's UserDefaults. The separate executable
+may need its own Accessibility/Input Monitoring permission; check the printed status.
+Do not reopen the GUI while a live prototype is running. The prototype refuses to start
+while the GUI is running and locks out duplicate live prototype instances.
+
+Stop with **Ctrl-C** or `kill -TERM <pid>`; it waits for the current operation and attempts
+native-control restoration before exiting. A failed restoration is printed and returns a
+nonzero exit status; power-cycle the mouse if needed. Never use SIGKILL for normal shutdown.
+No service is installed, and no login/startup settings are changed.
+
 ## Try it
 
 1. In the **Buttons** tab, click a button on the mouse picture. Pick an action for its click, hold, and each drag direction. For **Keyboard shortcut**, click the recorder and press your keys; Escape cancels. **Restore defaults** resets the button. The timing pad previews the hold delay. Settings save automatically.

@@ -35,7 +35,11 @@ final class AppModel: ObservableObject {
     private var holdTasks: [MouseControl: Task<Void, Never>] = [:]
     private var actionAnchors: [MouseControl: CGPoint] = [:]
     private var dragPointer: PointerOutput?
+    #if !MX_HEADLESS
     private var zoomTestWindow: ZoomTestWindow?
+    #endif
+    private let startsHardware: Bool
+    private let persistsSettings: Bool
     private var appliedConfiguration: MouseConfiguration?
     private var settingsTask: Task<Void, Never>?
     private var recordingShortcut = false
@@ -52,9 +56,16 @@ final class AppModel: ObservableObject {
     private var monitorTask: Task<Void, Never>?
     private var wakeObservers: [NSObjectProtocol] = []
 
-    init(mouse device: BoltMouse? = nil, configURL: URL? = nil) {
+    init(
+        mouse device: BoltMouse? = nil, configURL: URL? = nil,
+        initialPreferences: Preferences? = nil, startsHardware: Bool = true,
+        persistsSettings: Bool = true
+    ) {
         self.mouse = device ?? BoltMouse()
         self.configURL = configURL
+        self.startsHardware = startsHardware
+        self.persistsSettings = persistsSettings
+        if let initialPreferences { self.preferences = initialPreferences }
         mouse.onStatus = { [weak self] text in
             guard let self else { return }
             self.status = text
@@ -140,7 +151,7 @@ final class AppModel: ObservableObject {
     }
 
     private func settingsChanged(from old: Preferences) {
-        preferences.save()
+        if persistsSettings { preferences.save() }
         writeConfigFile()
         var previous = old
         previous.resumeMappings = preferences.resumeMappings
@@ -207,7 +218,7 @@ final class AppModel: ObservableObject {
     }
 
     private func writeConfigFile(force: Bool = false) {
-        guard let url = configURL else { return }
+        guard persistsSettings, let url = configURL else { return }
         if !force, let text = try? String(contentsOf: url, encoding: .utf8) {
             // Don't overwrite a file the user is still fixing.
             guard let current = try? ConfigJSON.apply(text, to: preferences), current != preferences
@@ -231,7 +242,7 @@ final class AppModel: ObservableObject {
     }
 
     private func connectIfNeeded() {
-        guard !sleeping, !quitting, !busy, !enabled, !needsRelease,
+        guard startsHardware, !sleeping, !quitting, !busy, !enabled, !needsRelease,
             mouse.connection == nil
         else { return }
         guard !logitechRunning else {
@@ -313,7 +324,7 @@ final class AppModel: ObservableObject {
     }
 
     func enable() async {
-        guard !busy, !enabled, !needsRelease, !sleeping, !quitting else { return }
+        guard startsHardware, !busy, !enabled, !needsRelease, !sleeping, !quitting else { return }
         refreshPermissions()
         guard !logitechRunning else {
             status = "Stop Logitech's background agent before enabling."
@@ -515,6 +526,7 @@ final class AppModel: ObservableObject {
         }
     }
 
+    #if !MX_HEADLESS
     func showZoomTest() {
         if zoomTestWindow == nil {
             zoomTestWindow = ZoomTestWindow { [weak self] in self?.append($0) }
@@ -530,11 +542,17 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func quitSafely() async -> Bool {
+    #endif
+
+    func quitSafely(showAlert: Bool = true) async -> Bool {
         quitting = true
         defer { quitting = false }
         await suspend(reason: "Stopped · buttons returned to the mouse")
         if !mouse.claimed { return true }
+        #if MX_HEADLESS
+        return false
+        #else
+        guard showAlert else { return false }
         let alert = NSAlert()
         alert.messageText = "Mouse buttons could not be restored"
         alert.informativeText =
@@ -542,5 +560,6 @@ final class AppModel: ObservableObject {
         alert.addButton(withTitle: "Stay and retry")
         alert.addButton(withTitle: "Quit anyway")
         return alert.runModal() == .alertSecondButtonReturn
+        #endif
     }
 }
