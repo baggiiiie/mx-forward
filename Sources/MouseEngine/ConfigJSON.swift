@@ -89,10 +89,11 @@ enum ConfigAction: Codable, Equatable {
     case `default`
     case action(ButtonAction)
 
-    private struct ShortcutObject: Codable {
-        var keyCode: UInt16
+    private struct ActionObject: Codable {
+        var keyCode: UInt16?
         var modifiers: [String]?
         var label: String?
+        var clickWithModifiers: [String]?
     }
 
     init(from decoder: Decoder) throws {
@@ -115,22 +116,38 @@ enum ConfigAction: Codable, Equatable {
                 }
             }
         } else {
-            let object = try container.decode(ShortcutObject.self)
+            let object = try container.decode(ActionObject.self)
             var modifiers: UInt64 = 0
-            for name in object.modifiers ?? [] {
+            for name in object.clickWithModifiers ?? object.modifiers ?? [] {
                 guard let flag = ShortcutText.modifier(name) else {
                     throw DecodingError.dataCorruptedError(
                         in: container, debugDescription: "Unknown modifier \"\(name)\"")
                 }
                 modifiers |= flag
             }
+            if object.clickWithModifiers != nil {
+                guard modifiers != 0, object.keyCode == nil, object.modifiers == nil, object.label == nil
+                else {
+                    throw DecodingError.dataCorruptedError(
+                        in: container,
+                        debugDescription:
+                            "clickWithModifiers needs at least one modifier and no keyboard key."
+                    )
+                }
+                self = .action(ButtonAction(.modifierClick, modifiers: modifiers))
+                return
+            }
+            guard let keyCode = object.keyCode else {
+                throw DecodingError.dataCorruptedError(
+                    in: container, debugDescription: "A keyboard shortcut object needs keyCode.")
+            }
             self = .action(
                 .shortcut(
                     Shortcut(
-                        keyCode: object.keyCode, modifiers: modifiers,
+                        keyCode: keyCode, modifiers: modifiers,
                         keyLabel: object.label
                             ?? Shortcut.keyName(
-                                object.keyCode, characters: ShortcutText.name(for: object.keyCode)))))
+                                keyCode, characters: ShortcutText.name(for: keyCode)))))
         }
     }
 
@@ -139,13 +156,17 @@ enum ConfigAction: Codable, Equatable {
         switch self {
         case .default: try container.encode("default")
         case .action(let action):
+            if action.kind == .modifierClick, let modifiers = action.modifiers {
+                return try container.encode(
+                    ActionObject(clickWithModifiers: ShortcutText.modifierNames(modifiers)))
+            }
             guard action.kind == .shortcut else { return try container.encode(action.kind.rawValue) }
             guard let shortcut = action.shortcut else { return try container.encode("none") }
             if let text = ShortcutText.format(shortcut) {
                 try container.encode(text)
             } else {
                 try container.encode(
-                    ShortcutObject(
+                    ActionObject(
                         keyCode: shortcut.keyCode, modifiers: ShortcutText.modifierNames(shortcut.modifiers),
                         label: shortcut.keyLabel))
             }
@@ -278,7 +299,8 @@ package enum ConfigJSON {
 
     private static let keyOrder =
         ["testMode", "buttons"] + ConfigDocument.Buttons.names.map(\.0) + [
-            "wheel", "thumbWheel", "enabled", "click", "hold", "up", "down", "left", "right", "holdDelayMs",
+            "wheel", "thumbWheel", "enabled", "click", "hold", "up", "down", "left", "right",
+            "clickWithModifiers", "holdDelayMs",
             "dragSensitivityPercent", "zoomSpeedPercent", "speedPercent", "accelerationPercent", "natural",
             "mode",
             "direction", "keyCode", "modifiers", "label",

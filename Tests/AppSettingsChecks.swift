@@ -37,8 +37,24 @@ enum AppSettingsChecks {
         preferences.wheelAcceleration = 1.5
         preferences.horizontalDirection = .reversed
         preferences.horizontalSpeed = 2.5
+        preferences.buttons.back.click = ButtonAction(
+            .modifierClick, modifiers: CGEventFlags.maskCommand.union(.maskShift).rawValue)
         let restored = try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(preferences))
         try require(restored == preferences, "Custom and cleared actions did not survive saving")
+        var invalid = preferences
+        invalid.buttons.back.click.modifiers = CGEventFlags.maskCommand.union(.maskNumericPad).rawValue
+        let decoded = try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(invalid))
+        try require(
+            decoded.normalized().buttons.back.click.modifiers == CGEventFlags.maskCommand.rawValue,
+            "Saved modifier clicks retained unsupported flags")
+        invalid.buttons.back.click.modifiers = 0
+        try require(
+            invalid.normalized().buttons.back.click.modifiers == nil,
+            "Empty modifier clicks should stay unconfigured")
+        try require(
+            ButtonAction(.modifierClick, modifiers: CGEventFlags.maskSecondaryFn.rawValue).label
+                == "fn click",
+            "Fn click label has extra spaces")
         try require(
             restored.hardwareConfiguration.movementControls == [.thumb, .top, .middle],
             "Only buttons with a drag action should freeze the pointer")
@@ -111,6 +127,38 @@ enum AppSettingsChecks {
         print(
             "PASS: click-to-record captures keys, ignores repeats, and cancels on Escape, disable, or focus loss"
         )
+        let modifierRecorder = RecorderButton()
+        modifierRecorder.modifiersOnly = true
+        var modifiers: [UInt64] = []
+        modifierRecorder.onModifiersRecord = { modifiers.append($0) }
+        func flags(_ flags: NSEvent.ModifierFlags) -> NSEvent {
+            NSEvent.keyEvent(
+                with: .flagsChanged, location: .zero, modifierFlags: flags, timestamp: 0,
+                windowNumber: 0, context: nil, characters: "", charactersIgnoringModifiers: "",
+                isARepeat: false, keyCode: 55)!
+        }
+        modifierRecorder.beginRecording()
+        modifierRecorder.flagsChanged(with: flags(.command))
+        modifierRecorder.flagsChanged(with: flags([.command, .shift]))
+        modifierRecorder.keyDown(with: key(0, "a", [.command, .shift]))
+        modifierRecorder.flagsChanged(with: flags(.command))
+        try require(modifiers.isEmpty, "Modifiers were saved before releasing all keys")
+        modifierRecorder.flagsChanged(with: flags([]))
+        try require(
+            modifiers == [CGEventFlags.maskCommand.union(.maskShift).rawValue],
+            "Recording lost a modifier when the keys were released separately")
+        modifierRecorder.beginRecording()
+        modifierRecorder.flagsChanged(with: flags(.option))
+        modifierRecorder.keyDown(with: key(53, "\u{1b}", [.option]))
+        modifierRecorder.flagsChanged(with: flags([]))
+        try require(modifiers.count == 1, "Escape saved a modifier click")
+        modifierRecorder.beginRecording()
+        modifierRecorder.flagsChanged(with: flags(.control))
+        modifierRecorder.flagsChanged(with: flags([]))
+        try require(
+            modifiers.last == CGEventFlags.maskControl.rawValue,
+            "Cancelled modifiers leaked into a new recording")
+        print("PASS: modifier recording saves the full chord on release and cancels on Escape")
     }
 
     private static func runDragScrollChecks() throws {
@@ -245,7 +293,19 @@ enum AppSettingsChecks {
         expected.wheelMode = .freeSpin
         expected.horizontalSpeed = 6
         try require(partial == expected, "Partial JSON changed unrelated settings or skipped clamping")
+        let click = try ConfigJSON.apply(
+            #"{"buttons":{"forward":{"click":{"clickWithModifiers":["cmd","shift"]}}}}"#,
+            to: preferences)
+        try require(
+            click.buttons.forward.click == ButtonAction(.modifierClick, modifiers: cmd | shift),
+            "Modifier click JSON lost its modifiers")
         let failures: [(String, String)] = [
+            (#"{"buttons":{"forward":{"click":{"clickWithModifiers":[]}}}}"#, "at least one modifier"),
+            (#"{"buttons":{"forward":{"click":{"clickWithModifiers":["hyper"]}}}}"#, "Unknown modifier"),
+            (
+                #"{"buttons":{"forward":{"click":{"clickWithModifiers":["cmd"],"keyCode":0}}}}"#,
+                "no keyboard key"
+            ),
             (#"{"buttons": {"forward": {"left": "zoom"}}}"#, "buttons.forward.left"),
             (#"{"buttons": {"top": {"up": "missionControl"}}}"#, "set both to \"zoom\""),
             (#"{"wheel": {"mode": "spin"}}"#, "mode"),

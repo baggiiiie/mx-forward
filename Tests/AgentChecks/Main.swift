@@ -179,7 +179,9 @@ enum AgentChecks {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("config.json")
-        try #"{"wheel":{"speedPercent":275}}"#.write(to: url, atomically: true, encoding: .utf8)
+        let target = directory.appendingPathComponent("dotfiles.json")
+        try #"{"wheel":{"speedPercent":275}}"#.write(to: target, atomically: true, encoding: .utf8)
+        try FileManager.default.createSymbolicLink(at: url, withDestinationURL: target)
         let engine = MouseEngine(configURL: url, startsHardware: false, preferenceStore: store)
         try require(engine.preferences.wheelSpeed == 2.75, "Engine ignored its preference store")
         let original = try String(contentsOf: url, encoding: .utf8)
@@ -191,6 +193,14 @@ enum AgentChecks {
         let saved = try ConfigJSON.apply(String(contentsOf: url, encoding: .utf8), to: Preferences())
         try require(saved.horizontalSpeed == 2, "New thumb-wheel speed was omitted from an older JSON file")
         try require(Preferences.load(defaults: store).horizontalSpeed == 2, "Thumb-wheel speed was not saved")
+        try require(
+            try FileManager.default.destinationOfSymbolicLink(atPath: url.path) == target.path,
+            "Saving replaced the config symlink")
+        let targetSettings = try ConfigJSON.apply(
+            String(contentsOf: target, encoding: .utf8), to: Preferences())
+        try require(targetSettings.horizontalSpeed == 2, "Saving did not update the symlink target")
+        try #"{"wheel":{"speedPercent":150}}"#.write(to: target, atomically: true, encoding: .utf8)
+        try await wait { engine.preferences.wheelSpeed == 1.5 }
         _ = await engine.shutdown()
     }
 

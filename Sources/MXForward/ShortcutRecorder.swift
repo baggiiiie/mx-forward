@@ -1,5 +1,5 @@
-import MouseEngine
 import AppKit
+import MouseEngine
 import SwiftUI
 
 struct ShortcutRecorder: NSViewRepresentable {
@@ -8,16 +8,35 @@ struct ShortcutRecorder: NSViewRepresentable {
     var onRecordingChanged: (Bool) -> Void = { _ in }
 
     func makeNSView(context: Context) -> RecorderButton {
-        let view = RecorderButton()
-        view.bezelStyle = .rounded
-        return view
+        RecorderButton()
     }
 
     func updateNSView(_ view: RecorderButton, context: Context) {
         view.onRecord = { shortcut = $0 }
         view.onRecordingChanged = onRecordingChanged
         view.isEnabled = context.environment.isEnabled
-        view.shortcutTitle = shortcut?.label ?? "Record shortcut…"
+        view.idleTitle = shortcut?.label ?? "Record shortcut…"
+        view.updateTitle()
+        view.setAccessibilityLabel(accessibilityLabel)
+    }
+}
+
+struct ModifierRecorder: NSViewRepresentable {
+    @Binding var modifiers: UInt64?
+    var accessibilityLabel: String
+    var onRecordingChanged: (Bool) -> Void
+
+    func makeNSView(context: Context) -> RecorderButton {
+        let view = RecorderButton()
+        view.modifiersOnly = true
+        return view
+    }
+
+    func updateNSView(_ view: RecorderButton, context: Context) {
+        view.onModifiersRecord = { modifiers = $0 }
+        view.onRecordingChanged = onRecordingChanged
+        view.isEnabled = context.environment.isEnabled
+        view.idleTitle = modifiers.map(KeyboardModifiers.label) ?? "Record modifiers…"
         view.updateTitle()
         view.setAccessibilityLabel(accessibilityLabel)
     }
@@ -25,16 +44,20 @@ struct ShortcutRecorder: NSViewRepresentable {
 
 final class RecorderButton: NSButton {
     private var recording = false
+    private var pendingModifiers: UInt64 = 0
     private var windowObserver: NSObjectProtocol?
     private var keyTap: CFMachPort?
     private var keyTapSource: CFRunLoopSource?
-    var shortcutTitle = "Record shortcut…"
+    var idleTitle = "Record shortcut…"
+    var modifiersOnly = false
     var onRecord: (Shortcut) -> Void = { _ in }
+    var onModifiersRecord: (UInt64) -> Void = { _ in }
     var onRecordingChanged: (Bool) -> Void = { _ in }
     override var acceptsFirstResponder: Bool { true }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        bezelStyle = .rounded
         target = self
         action = #selector(beginRecording)
     }
@@ -57,6 +80,7 @@ final class RecorderButton: NSButton {
     private func stopRecording() {
         guard recording else { return }
         recording = false
+        pendingModifiers = 0
         if let keyTap { CFMachPortInvalidate(keyTap) }
         if let keyTapSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), keyTapSource, .commonModes) }
         keyTap = nil
@@ -66,11 +90,12 @@ final class RecorderButton: NSButton {
     }
 
     private func startKeyCapture() {
-        // Catch system shortcuts before macOS handles them, only while recording in this window.
+        // Capture system shortcuts only while this window is active.
         guard AXIsProcessTrusted(),
             let tap = CGEvent.tapCreate(
                 tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
-                eventsOfInterest: CGEventMask(1 << CGEventType.keyDown.rawValue),
+                eventsOfInterest: CGEventMask(1 << CGEventType.keyDown.rawValue)
+                    | (modifiersOnly ? CGEventMask(1 << CGEventType.flagsChanged.rawValue) : 0),
                 callback: { _, type, event, context in
                     guard let context else { return Unmanaged.passUnretained(event) }
                     return MainActor.assumeIsolated {
@@ -94,7 +119,14 @@ final class RecorderButton: NSButton {
 
     func updateTitle() {
         if !isEnabled { stopRecording() }
-        title = recording ? "Press shortcut… (Esc cancels)" : shortcutTitle
+        if recording && modifiersOnly {
+            title =
+                pendingModifiers == 0
+                ? "Hold modifiers… (Esc cancels)"
+                : KeyboardModifiers.label(pendingModifiers) + " (release to save)"
+        } else {
+            title = recording ? "Press shortcut… (Esc cancels)" : idleTitle
+        }
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
@@ -111,14 +143,33 @@ final class RecorderButton: NSButton {
         capture(event)
     }
 
+    override func flagsChanged(with event: NSEvent) {
+        guard recording, isEnabled, modifiersOnly else { return super.flagsChanged(with: event) }
+        capture(event)
+    }
+
     private func capture(_ event: NSEvent) {
+        if modifiersOnly && event.type == .flagsChanged {
+            let flags = UInt64(event.modifierFlags.rawValue) & KeyboardModifiers.mask.rawValue
+            if flags == 0 && pendingModifiers != 0 {
+                let modifiers = pendingModifiers
+                stopRecording()
+                onModifiersRecord(modifiers)
+            } else {
+                pendingModifiers |= flags
+                updateTitle()
+            }
+            return
+        }
         guard event.type == .keyDown, !event.isARepeat else { return }
         if event.keyCode == 53
-            && event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty
+            && (modifiersOnly
+                || event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty)
         {
             stopRecording()
             return
         }
+        guard !modifiersOnly else { return }
         stopRecording()
         onRecord(Shortcut.recorded(from: event))
     }

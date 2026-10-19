@@ -257,11 +257,15 @@ private struct ClickableButtonForm: View {
             get: { value[slot].kind },
             set: { kind in
                 let shortcut = value[slot].shortcut ?? ButtonMapping.defaults(for: control)[slot].shortcut
-                mapping.wrappedValue.set(ButtonAction(kind, shortcut: shortcut), for: slot)
+                mapping.wrappedValue.set(
+                    ButtonAction(kind, shortcut: shortcut, modifiers: value[slot].modifiers), for: slot)
             })
         let shortcut = Binding(
             get: { value[slot].shortcut },
             set: { mapping.wrappedValue[slot] = .shortcut($0) })
+        let modifiers = Binding(
+            get: { value[slot].modifiers },
+            set: { mapping.wrappedValue[slot] = ButtonAction(.modifierClick, modifiers: $0) })
         return VStack(alignment: .trailing, spacing: 6) {
             Picker(title(slot), selection: kind) {
                 ForEach(ButtonAction.Kind.choices(for: slot)) { kind in Text(kind.label).tag(kind) }
@@ -273,6 +277,16 @@ private struct ClickableButtonForm: View {
                     onRecordingChanged: inspector.onRecordingChanged
                 )
                 .frame(width: 180, height: 28)
+            } else if value[slot].kind == .modifierClick {
+                ModifierRecorder(
+                    modifiers: modifiers,
+                    accessibilityLabel: "\(inspector.button.title) \(title(slot).lowercased()) modifiers",
+                    onRecordingChanged: inspector.onRecordingChanged
+                )
+                .frame(width: 210, height: 28)
+                Text("Hold the modifier keys, then release to save. Sends a left click at the pointer.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

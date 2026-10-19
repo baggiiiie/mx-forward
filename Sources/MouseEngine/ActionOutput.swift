@@ -12,24 +12,48 @@ package enum ActionOutput {
         switch action.kind {
         case .none, .zoom, .scroll: return true
         case .smartZoom: return ZoomOutput.send(.click, at: point)
-        case .middleClick: return middleClick()
+        case .middleClick: return click(button: .center)
+        case .modifierClick:
+            guard let modifiers = action.modifiers, modifiers & KeyboardModifiers.mask.rawValue != 0 else {
+                return true
+            }
+            return click(button: .left, modifiers: modifiers)
         case .shortcut, .missionControl, .appExpose, .desktopLeft, .desktopRight:
             return shortcut(for: action).map(KeyboardOutput.send) ?? true
         }
     }
 
-    private static func middleClick() -> Bool {
+    private static func click(button: CGMouseButton, modifiers: UInt64 = 0) -> Bool {
         guard AXIsProcessTrusted(), let location = CGEvent(source: nil)?.location,
-            let down = CGEvent(
-                mouseEventSource: nil, mouseType: .otherMouseDown, mouseCursorPosition: location,
-                mouseButton: .center),
-            let up = CGEvent(
-                mouseEventSource: nil, mouseType: .otherMouseUp, mouseCursorPosition: location,
-                mouseButton: .center)
+            let (down, up) = clickEvents(button: button, modifiers: modifiers, at: location)
         else { return false }
         down.post(tap: .cghidEventTap)
         up.post(tap: .cghidEventTap)
         return true
+    }
+
+    package static func clickEvents(
+        button: CGMouseButton, modifiers: UInt64 = 0, at point: CGPoint
+    ) -> (CGEvent, CGEvent)? {
+        let types: (CGEventType, CGEventType)
+        switch button {
+        case .left: types = (.leftMouseDown, .leftMouseUp)
+        case .right: types = (.rightMouseDown, .rightMouseUp)
+        default: types = (.otherMouseDown, .otherMouseUp)
+        }
+        guard let source = CGEventSource(stateID: .privateState),
+            let down = CGEvent(
+                mouseEventSource: source, mouseType: types.0, mouseCursorPosition: point, mouseButton: button),
+            let up = CGEvent(
+                mouseEventSource: source, mouseType: types.1, mouseCursorPosition: point, mouseButton: button)
+        else { return nil }
+        let flags = CGEventSource.flagsState(.combinedSessionState)
+            .union(CGEventFlags(rawValue: modifiers).intersection(KeyboardModifiers.mask))
+        for event in [down, up] {
+            event.flags = flags
+            event.setIntegerValueField(.mouseEventClickState, value: 1)
+        }
+        return (down, up)
     }
 }
 

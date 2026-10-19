@@ -2,6 +2,20 @@ import AppKit
 import CoreGraphics
 import ForwardCore
 
+package enum KeyboardModifiers {
+    package static let mask: CGEventFlags = [
+        .maskControl, .maskAlternate, .maskShift, .maskCommand, .maskSecondaryFn,
+    ]
+
+    package static func label(_ modifiers: UInt64) -> String {
+        let flags = CGEventFlags(rawValue: modifiers)
+        return [
+            (CGEventFlags.maskControl, "⌃"), (.maskAlternate, "⌥"),
+            (.maskShift, "⇧"), (.maskCommand, "⌘"), (.maskSecondaryFn, "fn "),
+        ].filter { flags.contains($0.0) }.map(\.1).joined()
+    }
+}
+
 package struct Shortcut: Codable, Equatable {
     package var keyCode: UInt16
     package var modifiers: UInt64
@@ -12,22 +26,17 @@ package struct Shortcut: Codable, Equatable {
         self.modifiers = modifiers
         self.keyLabel = keyLabel
     }
-    package static let forward = Shortcut(keyCode: 30, modifiers: CGEventFlags.maskCommand.rawValue, keyLabel: "]")
-    package static let back = Shortcut(keyCode: 33, modifiers: CGEventFlags.maskCommand.rawValue, keyLabel: "[")
+    package static let forward = Shortcut(
+        keyCode: 30, modifiers: CGEventFlags.maskCommand.rawValue, keyLabel: "]")
+    package static let back = Shortcut(
+        keyCode: 33, modifiers: CGEventFlags.maskCommand.rawValue, keyLabel: "[")
 
-    package var label: String {
-        let flags = CGEventFlags(rawValue: modifiers)
-        return [
-            (CGEventFlags.maskControl, "⌃"), (.maskAlternate, "⌥"),
-            (.maskShift, "⇧"), (.maskCommand, "⌘"), (.maskSecondaryFn, "fn "),
-        ]
-        .filter { flags.contains($0.0) }.map(\.1).joined() + keyLabel
-    }
+    package var label: String { KeyboardModifiers.label(modifiers) + keyLabel }
 
     package static func recorded(from event: NSEvent) -> Shortcut {
-        let mask: NSEvent.ModifierFlags = [.command, .control, .option, .shift, .function]
-        var flags = event.modifierFlags.intersection(mask)
-        if (123...126).contains(event.keyCode) { flags.remove(.function) }
+        var flags = CGEventFlags(rawValue: UInt64(event.modifierFlags.rawValue)).intersection(
+            KeyboardModifiers.mask)
+        if (123...126).contains(event.keyCode) { flags.remove(.maskSecondaryFn) }
         return Shortcut(
             keyCode: event.keyCode, modifiers: UInt64(flags.rawValue),
             keyLabel: keyName(event.keyCode, characters: event.charactersIgnoringModifiers))
@@ -47,13 +56,15 @@ package struct Shortcut: Codable, Equatable {
 
 package struct ButtonAction: Codable, Equatable {
     package enum Kind: String, Codable, CaseIterable, Identifiable {
-        case none, shortcut, missionControl, appExpose, desktopLeft, desktopRight, smartZoom, middleClick
+        case none, shortcut, modifierClick, missionControl, appExpose, desktopLeft, desktopRight, smartZoom,
+            middleClick
         case zoom, scroll
         package var id: Self { self }
         package var label: String {
             switch self {
             case .none: return "No action"
             case .shortcut: return "Keyboard shortcut"
+            case .modifierClick: return "Click with modifier"
             case .missionControl: return "Mission Control"
             case .appExpose: return "App Exposé"
             case .desktopLeft: return "Desktop left"
@@ -75,10 +86,13 @@ package struct ButtonAction: Codable, Equatable {
 
     package var kind: Kind
     package var shortcut: Shortcut?
+    package var modifiers: UInt64?
 
-    package init(_ kind: Kind, shortcut: Shortcut? = nil) {
+    package init(_ kind: Kind, shortcut: Shortcut? = nil, modifiers: UInt64? = nil) {
         self.kind = kind
         self.shortcut = kind == .shortcut ? shortcut : nil
+        let flags = (modifiers ?? 0) & KeyboardModifiers.mask.rawValue
+        self.modifiers = kind == .modifierClick && flags != 0 ? flags : nil
     }
 
     package static func shortcut(_ shortcut: Shortcut?) -> ButtonAction {
@@ -86,7 +100,16 @@ package struct ButtonAction: Codable, Equatable {
     }
 
     package var isNone: Bool { kind == .none }
-    package var label: String { kind == .shortcut ? shortcut?.label ?? "Shortcut not set" : kind.label }
+    package var label: String {
+        switch kind {
+        case .shortcut: return shortcut?.label ?? "Shortcut not set"
+        case .modifierClick:
+            return modifiers.map {
+                KeyboardModifiers.label($0).trimmingCharacters(in: .whitespaces) + " click"
+            } ?? "Modifiers not set"
+        default: return kind.label
+        }
+    }
 }
 
 /// What one button does on click, hold, and drag, plus its timing.
@@ -154,9 +177,12 @@ package struct ButtonMapping: Codable, Equatable {
 
     package func normalized() -> ButtonMapping {
         var value = self
-        for slot in ButtonSlot.allCases where !ButtonAction.Kind.choices(for: slot).contains(value[slot].kind)
-        {
-            value[slot] = ButtonAction(.none)
+        for slot in ButtonSlot.allCases {
+            let action = value[slot]
+            value[slot] =
+                ButtonAction.Kind.choices(for: slot).contains(action.kind)
+                ? ButtonAction(action.kind, shortcut: action.shortcut, modifiers: action.modifiers)
+                : ButtonAction(.none)
         }
         if value.dragScroll {
             for slot in ButtonSlot.directions { value[slot] = ButtonAction(.scroll) }

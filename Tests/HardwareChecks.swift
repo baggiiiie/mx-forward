@@ -65,6 +65,22 @@ private enum HardwareChecks {
         try require(letterDown.flags == .maskCommand, "Arrow flags leaked onto browser navigation")
         print(
             "PASS: window navigation generates complete arrow-key presses without changing letter shortcuts")
+        let clickPoint = CGPoint(x: 200, y: 300)
+        let clickModifiers = CGEventFlags.maskCommand.union(.maskShift)
+        guard
+            let (clickDown, clickUp) = ActionOutput.clickEvents(
+                button: .left, modifiers: clickModifiers.rawValue, at: clickPoint)
+        else { throw MouseError.message("Could not create modifier click events") }
+        try require(
+            clickDown.type == .leftMouseDown && clickUp.type == .leftMouseUp,
+            "Modifier click used the wrong mouse button")
+        for event in [clickDown, clickUp] {
+            try require(
+                event.flags.contains(clickModifiers) && event.location == clickPoint
+                    && event.getIntegerValueField(.mouseEventClickState) == 1,
+                "Modifier click lost its flags, location, or single-click state")
+        }
+        print("PASS: modifier clicks generate a matching left-button press and release")
         for pixels: Int32 in [-80, 40] {
             guard let event = WheelOutput.event(pixels: pixels), let native = NSEvent(cgEvent: event) else {
                 throw MouseError.message("Could not create scroll event")

@@ -8,6 +8,8 @@ Thumb-wheel speed ranges from 25–600% (`thumbWheel.speedPercent` in JSON). At 
 
 A lightweight agent owns the mouse and menu bar; the settings UI is a separate process. Everything is also editable as JSON at `~/.config/mx-forward/config.json`.
 
+Choose **Click with modifier** to send a left click with recorded modifier keys. Hold the keys together and release them to save. In JSON, use an action like `"click": {"clickWithModifiers": ["cmd", "shift"]}`.
+
 ## Build
 
 Requires macOS 14+ and Swift 6 CLI tools. No third-party dependencies.

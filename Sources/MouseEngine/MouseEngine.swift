@@ -208,7 +208,8 @@ package final class MouseEngine: ObservableObject {
     package func rewriteConfigFile() { writeConfigFile(force: true) }
 
     private func fileModified(_ url: URL) -> Date? {
-        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+        (try? FileManager.default.attributesOfItem(atPath: url.resolvingSymlinksInPath().path))?[
+            .modificationDate] as? Date
     }
 
     private func syncConfigFile() {
@@ -251,9 +252,10 @@ package final class MouseEngine: ObservableObject {
             }
         }
         do {
+            let destination = url.resolvingSymlinksInPath()
             try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try ConfigJSON.encode(preferences).write(to: url, atomically: true, encoding: .utf8)
+                at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try ConfigJSON.encode(preferences).write(to: destination, atomically: true, encoding: .utf8)
             configModified = fileModified(url)
             configError = nil
         } catch {

@@ -147,6 +147,7 @@ private struct ConfigReference: View {
                     "missionControl"  "appExpose"
                     "desktopLeft"  "desktopRight"
                     "smartZoom"  "middleClick"
+                    {"clickWithModifiers": ["cmd", "shift"]}  a left click with modifiers
                     "zoom"  up and down only
                     "scroll"  all four drag directions together (trackpad-style scrolling)
                     """)
