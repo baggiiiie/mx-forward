@@ -175,8 +175,22 @@ enum AgentChecks {
         var preferences = Preferences()
         preferences.wheelSpeed = 2.75
         preferences.save(defaults: store)
-        let engine = MouseEngine(startsHardware: false, persistsSettings: false, preferenceStore: store)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("config.json")
+        try #"{"wheel":{"speedPercent":275}}"#.write(to: url, atomically: true, encoding: .utf8)
+        let engine = MouseEngine(configURL: url, startsHardware: false, preferenceStore: store)
         try require(engine.preferences.wheelSpeed == 2.75, "Engine ignored its preference store")
+        let original = try String(contentsOf: url, encoding: .utf8)
+        engine.preferences.resumeMappings = true
+        try require(
+            try String(contentsOf: url, encoding: .utf8) == original,
+            "Enable/Pause rewrote an unchanged partial config")
+        engine.preferences.horizontalSpeed = 2
+        let saved = try ConfigJSON.apply(String(contentsOf: url, encoding: .utf8), to: Preferences())
+        try require(saved.horizontalSpeed == 2, "New thumb-wheel speed was omitted from an older JSON file")
+        try require(Preferences.load(defaults: store).horizontalSpeed == 2, "Thumb-wheel speed was not saved")
         _ = await engine.shutdown()
     }
 

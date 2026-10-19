@@ -157,6 +157,7 @@ private struct ConfigReference: View {
                 )
                 entry("wheel.mode", "unchanged  ratchet  freeSpin")
                 entry("thumbWheel.direction", "unchanged  standard  reversed")
+                entry("thumbWheel.speedPercent", "25–600; 100 uses native scrolling")
                 entry(
                     "Percentages",
                     "speedPercent, accelerationPercent, dragSensitivityPercent, zoomSpeedPercent use 100 = 100%."

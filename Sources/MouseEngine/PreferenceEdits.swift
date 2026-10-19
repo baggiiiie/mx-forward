@@ -7,7 +7,7 @@ extension Preferences {
         for key in [\Preferences.testMode, \.wheelEnabled, \.wheelNatural] {
             copyChange(key, from: base, to: edited, into: &result)
         }
-        for key in [\Preferences.wheelSpeed, \.wheelAcceleration] {
+        for key in [\Preferences.wheelSpeed, \.wheelAcceleration, \.horizontalSpeed] {
             copyChange(key, from: base, to: edited, into: &result)
         }
         copyChange(\.wheelMode, from: base, to: edited, into: &result)

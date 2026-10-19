@@ -22,7 +22,7 @@ enum AppSettingsChecks {
         expectedButtons.top.zoomSpeed = 3
         try require(
             migrated.buttons == expectedButtons && migrated.resumeMappings && migrated.wheelAcceleration == 1
-                && migrated.horizontalDirection == .unchanged,
+                && migrated.horizontalDirection == .unchanged && migrated.horizontalSpeed == 1,
             "Existing preferences did not migrate intact")
         print("PASS: preferences from older versions migrate to per-button click, hold, and drag actions")
 
@@ -36,6 +36,7 @@ enum AppSettingsChecks {
         preferences.buttons.middle.down = ButtonAction(.appExpose)
         preferences.wheelAcceleration = 1.5
         preferences.horizontalDirection = .reversed
+        preferences.horizontalSpeed = 2.5
         let restored = try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(preferences))
         try require(restored == preferences, "Custom and cleared actions did not survive saving")
         try require(
@@ -198,6 +199,7 @@ enum AppSettingsChecks {
     private static func runConfigJSON(_ custom: Preferences) throws {
         var preferences = custom
         preferences.wheelSpeed = 0.25 + 0.05 * 18
+        preferences.horizontalSpeed = 0.25 + 0.05 * 23
         preferences.buttons.thumb.dragSensitivity = 0.25 + 0.05 * 7
         preferences.buttons.thumb.left = .shortcut(
             Shortcut(keyCode: 30, modifiers: CGEventFlags.maskCommand.rawValue, keyLabel: "+"))
@@ -233,7 +235,7 @@ enum AppSettingsChecks {
         print("PASS: shortcut text parses modifiers, symbols, and named keys, and rejects unknown names")
 
         let partial = try ConfigJSON.apply(
-            #"{"buttons": {"back": {"click": "none", "hold": "cmd+w"}, "forward": {"click": "default"}}, "wheel": {"speedPercent": 5000, "mode": "freeSpin"}}"#,
+            #"{"buttons": {"back": {"click": "none", "hold": "cmd+w"}, "forward": {"click": "default"}}, "wheel": {"speedPercent": 5000, "mode": "freeSpin"}, "thumbWheel": {"speedPercent": 5000}}"#,
             to: preferences)
         var expected = preferences
         expected.buttons.back.click = ButtonAction(.none)
@@ -241,6 +243,7 @@ enum AppSettingsChecks {
         expected.buttons.forward.click = .shortcut(.forward)
         expected.wheelSpeed = 6
         expected.wheelMode = .freeSpin
+        expected.horizontalSpeed = 6
         try require(partial == expected, "Partial JSON changed unrelated settings or skipped clamping")
         let failures: [(String, String)] = [
             (#"{"buttons": {"forward": {"left": "zoom"}}}"#, "buttons.forward.left"),

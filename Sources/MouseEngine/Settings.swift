@@ -230,6 +230,7 @@ package struct MouseConfiguration: Equatable {
     package var movementControls: Set<MouseControl>
     package var wheelMode: WheelMode?
     package var horizontalInverted: Bool?
+    package var horizontalDiverted = false
 }
 
 package enum WheelMode: String, Codable, CaseIterable, Identifiable {
@@ -273,15 +274,19 @@ package struct Preferences: Codable, Equatable {
     package var wheelNatural = true
     package var wheelMode = WheelMode.unchanged
     package var horizontalDirection = HorizontalDirection.unchanged
+    package var horizontalSpeed = 1.0
 
-    package var hasMappings: Bool { !controls.isEmpty || wheelEnabled || horizontalDirection.inverted != nil }
+    package var hasMappings: Bool {
+        !controls.isEmpty || wheelEnabled || horizontalDirection.inverted != nil || horizontalSpeed != 1
+    }
 
     package var controls: Set<MouseControl> { Set(MouseControl.allCases.filter { buttons[$0].enabled }) }
 
     package var hardwareConfiguration: MouseConfiguration {
         MouseConfiguration(
             controls: controls, movementControls: controls.filter { buttons[$0].reportsMovement },
-            wheelMode: wheelEnabled ? wheelMode : nil, horizontalInverted: horizontalDirection.inverted)
+            wheelMode: wheelEnabled ? wheelMode : nil, horizontalInverted: horizontalDirection.inverted,
+            horizontalDiverted: horizontalSpeed != 1)
     }
 
     package init() {}
@@ -289,6 +294,7 @@ package struct Preferences: Codable, Equatable {
     private enum CodingKeys: String, CodingKey {
         case testMode, resumeMappings, buttons
         case wheelEnabled, wheelSpeed, wheelAcceleration, wheelNatural, wheelMode, horizontalDirection
+        case horizontalSpeed
     }
 
     package init(from decoder: Decoder) throws {
@@ -305,6 +311,7 @@ package struct Preferences: Codable, Equatable {
         wheelMode = try values.decodeIfPresent(WheelMode.self, forKey: .wheelMode) ?? .unchanged
         horizontalDirection =
             try values.decodeIfPresent(HorizontalDirection.self, forKey: .horizontalDirection) ?? .unchanged
+        horizontalSpeed = try values.decodeIfPresent(Double.self, forKey: .horizontalSpeed) ?? 1
     }
 
     package static let storageKey = "preferences.v1"
@@ -319,6 +326,7 @@ package struct Preferences: Codable, Equatable {
         for control in MouseControl.allCases { value.buttons[control] = value.buttons[control].normalized() }
         value.wheelSpeed = clamp(value.wheelSpeed, 0.25...6, fallback: 1)
         value.wheelAcceleration = clamp(value.wheelAcceleration, 0...2, fallback: 1)
+        value.horizontalSpeed = clamp(value.horizontalSpeed, 0.25...6, fallback: 1)
         return value
     }
     package func save(defaults: UserDefaults = .standard) {

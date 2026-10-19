@@ -75,6 +75,15 @@ private enum HardwareChecks {
                 "Scroll output lost pixel distance or changed horizontal scrolling")
         }
         print("PASS: macOS decodes precise vertical scroll events in both directions")
+        for pixels: Int32 in [-80, 40] {
+            guard let event = WheelOutput.event(pixels: 0, horizontal: pixels),
+                let native = NSEvent(cgEvent: event)
+            else { throw MouseError.message("Could not create horizontal scroll event") }
+            try require(
+                native.hasPreciseScrollingDeltas && native.scrollingDeltaX == CGFloat(pixels)
+                    && native.scrollingDeltaY == 0,
+                "Thumb-wheel output changed vertical scrolling or lost pixel distance")
+        }
         let recoveryDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(
             UUID().uuidString)
         try FileManager.default.createDirectory(at: recoveryDirectory, withIntermediateDirectories: true)
@@ -115,7 +124,15 @@ private enum HardwareChecks {
                 try require(!mouse.claimed, "Horizontal direction was not restored")
             }
             print("PASS: horizontal direction reverses and restores the original native settings")
-            try await mouse.claim([.forward], wheelMode: .ratchet, horizontalInverted: true)
+            for inverted: Bool? in [nil, true, false] {
+                try await mouse.claim([], horizontalInverted: inverted, horizontalDiverted: true)
+                try require(try await mouse.verifyClaim(), "Thumb-wheel diversion was not confirmed")
+                try await mouse.release()
+                try require(!mouse.claimed, "Thumb-wheel diversion was not restored")
+            }
+            print("PASS: thumb-wheel speed claims and restores native reporting in every direction")
+            try await mouse.claim(
+                [.forward], wheelMode: .ratchet, horizontalInverted: true, horizontalDiverted: true)
             try require(mouse.releaseImmediately(), "Immediate sleep-style restoration failed")
             try require(
                 FileManager.default.fileExists(atPath: recoveryURL.path),
@@ -136,6 +153,7 @@ private enum HardwareChecks {
         var preferences = Preferences()
         preferences.wheelEnabled = true
         preferences.horizontalDirection = .reversed
+        preferences.horizontalSpeed = 2
         preferences.wheelMode = .ratchet
         preferences.testMode = true
         preferences.resumeMappings = true
@@ -165,6 +183,7 @@ private enum HardwareChecks {
             }
             let initialClaims = claims("Forward")
             model.preferences.wheelSpeed = 2
+            model.preferences.horizontalSpeed = 3
             model.preferences.wheelAcceleration = 0.5
             model.preferences.buttons.top.zoomSpeed = 3
             model.preferences.buttons.forward.click = .shortcut(.back)
@@ -246,6 +265,7 @@ private enum HardwareChecks {
             for control in MouseControl.allCases { empty.buttons[control].enabled = false }
             empty.wheelEnabled = false
             empty.horizontalDirection = .unchanged
+            empty.horizontalSpeed = 1
             model.preferences = empty
             try await waitFor { !model.enabled && !model.busy }
             try require(

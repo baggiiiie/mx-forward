@@ -27,6 +27,8 @@ package final class MouseEngine: ObservableObject {
     private var configTask: Task<Void, Never>?
     private let mouse: BoltMouse
     private var wheel = WheelInterpreter()
+    private var horizontalWheel = ThumbWheelInterpreter()
+    private var horizontalNatural = true
     /// Gestures for buttons that are currently held.
     private var gestures: [MouseControl: ButtonGesture] = [:]
     private var holdTasks: [MouseControl: Task<Void, Never>] = [:]
@@ -91,6 +93,19 @@ package final class MouseEngine: ObservableObject {
                 self.status = "Scrolling could not be sent. Check Accessibility."
             }
         }
+        mouse.onHorizontalScroll = { [weak self] scroll, stepsPerDelta in
+            guard let self, self.enabled, self.preferences.horizontalSpeed != 1 else { return }
+            let pixels = self.horizontalWheel.pixels(
+                delta: scroll.delta, stepsPerDelta: stepsPerDelta,
+                speed: self.preferences.horizontalSpeed, natural: self.horizontalNatural)
+            guard pixels != 0 else { return }
+            let label =
+                (self.preferences.testMode ? "Test: " : "") + "Thumb wheel → \(pixels > 0 ? "left" : "right")"
+            if self.lastAction != label { self.lastAction = label }
+            if !self.preferences.testMode && !WheelOutput.send(pixels: 0, horizontal: pixels) {
+                self.status = "Scrolling could not be sent. Check Accessibility."
+            }
+        }
         mouse.onDisconnect = { [weak self] in
             self?.operationEpoch += 1
             self?.cancelInput()
@@ -127,7 +142,7 @@ package final class MouseEngine: ObservableObject {
                     self.connected = self.mouse.connection != nil
                 }
             })
-        refreshPermissions()
+        refreshSystemState()
         if configURL != nil {
             syncConfigFile()
             configTask = Task { [weak self] in
@@ -142,7 +157,7 @@ package final class MouseEngine: ObservableObject {
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(3)) } catch { return }
                 guard let self else { return }
-                self.refreshPermissions()
+                self.refreshSystemState()
                 await self.maintainConnection()
             }
         }
@@ -153,7 +168,7 @@ package final class MouseEngine: ObservableObject {
             preferences.save(defaults: preferenceStore)
             if old.resumeMappings != preferences.resumeMappings { preferenceStore.synchronize() }
         }
-        writeConfigFile()
+        writeConfigFile(base: old)
         var previous = old
         previous.resumeMappings = preferences.resumeMappings
         guard previous != preferences else { return }
@@ -219,11 +234,12 @@ package final class MouseEngine: ObservableObject {
         }
     }
 
-    private func writeConfigFile(force: Bool = false) {
+    private func writeConfigFile(force: Bool = false, base: Preferences? = nil) {
         guard persistsSettings, let url = configURL else { return }
         if !force, let text = try? String(contentsOf: url, encoding: .utf8) {
             do {
-                let current = try ConfigJSON.apply(text, to: preferences)
+                var current = try ConfigJSON.apply(text, to: base ?? preferences)
+                current.resumeMappings = preferences.resumeMappings
                 if current == preferences {
                     configError = nil
                     return
@@ -327,8 +343,13 @@ package final class MouseEngine: ObservableObject {
         if log.count > 60 { log.removeFirst(log.count - 60) }
     }
 
-    private func refreshPermissions() {
+    private func refreshSystemState() {
         guard startsHardware else { return }
+        let natural = UserDefaults.standard.object(forKey: "com.apple.swipescrolldirection") as? Bool ?? true
+        if horizontalNatural != natural {
+            horizontalNatural = natural
+            horizontalWheel.cancel()
+        }
         let trusted = AXIsProcessTrusted()
         if accessibility != trusted { accessibility = trusted }
         let monitoring = IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
@@ -351,7 +372,7 @@ package final class MouseEngine: ObservableObject {
         guard startsHardware, !busy, !enabled, !needsRelease, !sleeping, !quitting,
             !mouse.recoveryPending
         else { return }
-        refreshPermissions()
+        refreshSystemState()
         guard !logitechRunning else {
             status = "Stop Logitech's background agent before enabling."
             return
@@ -376,7 +397,8 @@ package final class MouseEngine: ObservableObject {
         do {
             try await mouse.claim(
                 configuration.controls, movement: configuration.movementControls,
-                wheelMode: configuration.wheelMode, horizontalInverted: configuration.horizontalInverted)
+                wheelMode: configuration.wheelMode, horizontalInverted: configuration.horizontalInverted,
+                horizontalDiverted: configuration.horizontalDiverted)
             guard epoch == operationEpoch else {
                 try await mouse.release()
                 return
@@ -441,6 +463,7 @@ package final class MouseEngine: ObservableObject {
         for task in holdTasks.values { task.cancel() }
         holdTasks.removeAll()
         wheel.cancel()
+        horizontalWheel.cancel()
     }
 
     private func reportsMovement(_ control: MouseControl) -> Bool {

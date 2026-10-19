@@ -34,9 +34,9 @@ package enum WheelOutput {
         return event(pixels: y, horizontal: x, phase: phase, at: point)
     }
 
-    package static func send(pixels: Int32) -> Bool {
-        guard pixels != 0 else { return true }
-        guard AXIsProcessTrusted(), let event = event(pixels: pixels) else { return false }
+    package static func send(pixels: Int32, horizontal: Int32 = 0) -> Bool {
+        guard pixels != 0 || horizontal != 0 else { return true }
+        guard AXIsProcessTrusted(), let event = event(pixels: pixels, horizontal: horizontal) else { return false }
         event.post(tap: .cghidEventTap)
         return true
     }

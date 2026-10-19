@@ -71,6 +71,8 @@ package final class BoltMouse {
         let feature: UInt8
         let original: ThumbWheelReporting
         let inverted: Bool
+        let stepsPerDelta: Double?
+        var diverted: Bool { stepsPerDelta != nil }
     }
     private var horizontalClaim: HorizontalClaim?
     var claimed: Bool { !claims.isEmpty || wheelClaim != nil || horizontalClaim != nil }
@@ -78,6 +80,7 @@ package final class BoltMouse {
     var onPress: (MouseControl, Bool) -> Void = { _, _ in }
     var onMovement: (Int16, Int16) -> Void = { _, _ in }
     var onScroll: (WheelScroll, UInt8) -> Void = { _, _ in }
+    var onHorizontalScroll: (ThumbWheelScroll, Double) -> Void = { _, _ in }
     var onDisconnect: () -> Void = {}
     var onLog: (String) -> Void = { _ in }
 
@@ -266,12 +269,12 @@ package final class BoltMouse {
 
     func claim(
         _ controls: Set<MouseControl>, movement: Set<MouseControl> = [], wheelMode: WheelMode? = nil,
-        horizontalInverted: Bool? = nil
+        horizontalInverted: Bool? = nil, horizontalDiverted: Bool = false
     ) async throws {
         guard let c = connection else { throw MouseError.message("Discover your mouse first.") }
         guard !recoveryPending else { throw MouseError.message("Mouse recovery is still pending.") }
         guard !claimed else { return }
-        guard !controls.isEmpty || wheelMode != nil || horizontalInverted != nil else {
+        guard !controls.isEmpty || wheelMode != nil || horizontalInverted != nil || horizontalDiverted else {
             throw MouseError.message("Choose a mouse control to enable.")
         }
         let unavailable = controls.subtracting(c.availableControls)
@@ -308,7 +311,9 @@ package final class BoltMouse {
                 onLog("Claimed \(control.name)\(rawMovement ? " with raw movement" : "")")
             }
             if let wheelMode { try await claimWheel(wheelMode, c) }
-            if let horizontalInverted { try await claimHorizontal(horizontalInverted, c) }
+            if horizontalInverted != nil || horizontalDiverted {
+                try await claimHorizontal(horizontalInverted, diverted: horizontalDiverted, c)
+            }
         } catch {
             // Cleanup must still run when the caller was cancelled.
             try? await Task { try await self.release() }.value
@@ -351,7 +356,8 @@ package final class BoltMouse {
         if let horizontal = horizontalClaim,
             writeImmediately(
                 device, c, feature: horizontal.feature, function: 2,
-                payload: horizontal.original.bytes)
+                payload: horizontal.original.parameters(
+                    inverted: horizontal.original.inverted, diverted: false))
         {
             horizontalClaim = nil
         }
@@ -387,7 +393,9 @@ package final class BoltMouse {
         }
         if let horizontal = horizontalClaim {
             let state = try await readHorizontal(c, feature: horizontal.feature)
-            guard state.inverted == horizontal.inverted else { return false }
+            guard state.inverted == horizontal.inverted, state.diverted == horizontal.diverted else {
+                return false
+            }
         }
         if wheelClaim != nil { return try await verifyWheel(c) }
         return true
@@ -452,6 +460,12 @@ package final class BoltMouse {
         else { return }
         if let wheel = wheelClaim, packet.feature == wheel.feature {
             if let scroll = WheelScroll(packet) { onScroll(scroll, wheel.multiplier) }
+            return
+        }
+        if let horizontal = horizontalClaim, let steps = horizontal.stepsPerDelta,
+            packet.feature == horizontal.feature
+        {
+            if let scroll = ThumbWheelScroll(packet) { onHorizontalScroll(scroll, steps) }
             return
         }
         guard c.feature == packet.feature else { return }
@@ -597,25 +611,36 @@ extension BoltMouse {
         return state
     }
 
-    private func claimHorizontal(_ inverted: Bool, _ c: Connection) async throws {
+    private func claimHorizontal(_ inverted: Bool?, diverted: Bool, _ c: Connection) async throws {
         let index = try await feature(0x2150, c.endpoint, c.slot)
         let original = try await readHorizontal(c, feature: index)
+        let inverted = inverted ?? original.inverted
+        var stepsPerDelta: Double?
+        if diverted {
+            let info = try await request(c.endpoint, c.slot, index, 0)
+            guard let resolution = ThumbWheelResolution(info.payload) else {
+                throw MouseError.message("Invalid thumb-wheel resolution.")
+            }
+            stepsPerDelta = resolution.stepsPerDelta
+        }
         guard connection == c else { throw MouseError.message("Mouse connection changed. Reconnect.") }
-        horizontalClaim = HorizontalClaim(feature: index, original: original, inverted: inverted)
+        horizontalClaim = HorizontalClaim(
+            feature: index, original: original, inverted: inverted, stepsPerDelta: stepsPerDelta)
         try saveRecovery(c)
-        let desired = original.parameters(inverted: inverted)
+        let desired = original.parameters(inverted: inverted, diverted: diverted)
         _ = try await request(c.endpoint, c.slot, index, 2, desired)
         let confirmed = try await readHorizontal(c, feature: index)
         guard confirmed.bytes == desired else {
-            throw MouseError.message("Mouse did not confirm horizontal scroll direction.")
+            throw MouseError.message("Mouse did not confirm thumb-wheel settings.")
         }
         onLog("Horizontal direction · \(inverted ? "Reversed" : "Standard")")
+        if diverted { onLog("Claimed thumb wheel with custom speed") }
     }
 
     private func releaseHorizontal(_ c: Connection) async throws {
         guard let horizontal = horizontalClaim else { return }
         let current = try await readHorizontal(c, feature: horizontal.feature)
-        let desired = current.parameters(inverted: horizontal.original.inverted)
+        let desired = current.parameters(inverted: horizontal.original.inverted, diverted: false)
         _ = try await request(c.endpoint, c.slot, horizontal.feature, 2, desired)
         let confirmed = try await readHorizontal(c, feature: horizontal.feature)
         guard confirmed.bytes == desired else {
@@ -697,7 +722,7 @@ extension BoltMouse {
             let index = try await feature(0x2150, c.endpoint, c.slot)
             recoveredHorizontal = HorizontalClaim(
                 feature: index, original: original,
-                inverted: saved.horizontalInverted ?? original.inverted)
+                inverted: saved.horizontalInverted ?? original.inverted, stepsPerDelta: nil)
         }
         try Task.checkCancellation()
         guard connection == c else { throw MouseError.message("Mouse disconnected during recovery") }

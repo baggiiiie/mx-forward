@@ -78,6 +78,7 @@ struct ConfigDocument: Codable, Equatable {
 
     struct ThumbWheel: Codable, Equatable {
         var direction: HorizontalDirection?
+        var speedPercent: Double?
     }
 }
 
@@ -263,7 +264,9 @@ package enum ConfigJSON {
                 accelerationPercent: percent(preferences.wheelAcceleration),
                 natural: preferences.wheelNatural,
                 mode: preferences.wheelMode),
-            thumbWheel: .init(direction: preferences.horizontalDirection))
+            thumbWheel: .init(
+                direction: preferences.horizontalDirection, speedPercent: percent(preferences.horizontalSpeed)
+            ))
     }
 
     package static func encode(_ preferences: Preferences) -> String {
@@ -364,6 +367,9 @@ package enum ConfigJSON {
             if let mode = wheel.mode { result.wheelMode = mode }
         }
         if let direction = document.thumbWheel?.direction { result.horizontalDirection = direction }
+        if let speed = document.thumbWheel?.speedPercent {
+            result.horizontalSpeed = scaled(speed, keeping: base.horizontalSpeed)
+        }
         return result.normalized()
     }
 

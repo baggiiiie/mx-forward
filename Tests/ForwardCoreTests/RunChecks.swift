@@ -77,15 +77,18 @@ enum RunChecks {
         wheel.testTinyReportIntervalsRemainFinite()
         wheel.testMaximumAccelerationAndPacketSizeStayBounded()
         let horizontal = ThumbWheelTests()
-        horizontal.testDirectionChangesPreserveNativeReportingAndTouchFlags()
-        horizontal.testReversingAnAlreadyInvertedWheelPreservesOtherBits()
+        horizontal.testDirectionChangesIgnoreTouchAndProximity()
+        horizontal.testDirectionChangesPreserveDiversion()
         horizontal.testIncompleteSettingsAreRejected()
+        horizontal.testDiversionAndSignedRotation()
+        horizontal.testResolutionAndDirection()
+        horizontal.testLinearSpeedAndFractionalMovement()
         if failureCount != 0 {
             print("\(failureCount) failures")
             exit(1)
         }
         print(
-            "PASS: 53 scenarios (click, hold, and drag gestures, zoom, wheel, HID++ reporting, native macOS events)"
+            "PASS: 56 scenarios (click, hold, and drag gestures, zoom, wheel, HID++ reporting, native macOS events)"
         )
     }
 }

@@ -1,5 +1,5 @@
-import MouseEngine
 import ForwardCore
+import MouseEngine
 import SwiftUI
 
 struct MouseConfigurator: View {
@@ -46,8 +46,8 @@ struct MouseConfigurator: View {
         var summaries: [MouseButton: String] = [
             .wheel:
                 "\(ButtonInspector.percent(p.wheelSpeed)) · \(p.wheelMode == .unchanged ? (p.wheelNatural ? "Natural" : "Standard") : p.wheelMode.label)",
-            .thumbWheel: p.horizontalDirection == .unchanged
-                ? "Native direction" : p.horizontalDirection.label,
+            .thumbWheel:
+                "\(ButtonInspector.percent(p.horizontalSpeed)) · \(p.horizontalDirection == .unchanged ? "Native direction" : p.horizontalDirection.label)",
         ]
         for button in MouseButton.allCases {
             guard let control = button.control else { continue }
@@ -151,6 +151,9 @@ struct ButtonInspector: View {
 
     @ViewBuilder private var thumbWheel: some View {
         Section {
+            ValueSlider(
+                title: "Scroll speed", value: $preferences.horizontalSpeed, range: 0.25...6, step: 0.05,
+                accessibility: "Thumb wheel scroll speed", format: Self.percent)
             Picker("Direction", selection: $preferences.horizontalDirection) {
                 ForEach(HorizontalDirection.allCases) { direction in Text(direction.label).tag(direction) }
             }
@@ -158,8 +161,10 @@ struct ButtonInspector: View {
         } header: {
             Text("Horizontal scrolling")
         } footer: {
-            Text("Keep current direction leaves the native setting alone. Pause restores it.")
-                .inspectorFootnote()
+            Text(
+                "100% keeps native scrolling. Other speeds use the selected multiplier without added acceleration. Pause restores your original settings."
+            )
+            .inspectorFootnote()
         }
     }
 

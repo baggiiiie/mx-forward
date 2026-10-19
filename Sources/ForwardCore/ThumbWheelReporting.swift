@@ -1,17 +1,16 @@
 public struct ThumbWheelReporting: Equatable {
-    private let reporting: UInt8
-    private let options: UInt8
+    public let diverted: Bool
+    public let inverted: Bool
 
     public init?(_ payload: [UInt8]) {
         guard payload.count >= 2 else { return nil }
-        reporting = payload[0]
-        options = payload[1]
+        diverted = payload[0] & 1 != 0
+        inverted = payload[1] & 1 != 0
     }
 
-    public var inverted: Bool { options & 1 != 0 }
-    public var bytes: [UInt8] { [reporting, options] }
+    public var bytes: [UInt8] { parameters(inverted: inverted) }
 
-    public func parameters(inverted: Bool) -> [UInt8] {
-        [reporting, (options & ~1) | (inverted ? 1 : 0)]
+    public func parameters(inverted: Bool, diverted: Bool? = nil) -> [UInt8] {
+        [(diverted ?? self.diverted) ? 1 : 0, inverted ? 1 : 0]
     }
 }
