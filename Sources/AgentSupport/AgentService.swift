@@ -1,3 +1,4 @@
+import CoreServices
 import Darwin
 import Foundation
 import MouseEngine
@@ -15,11 +16,19 @@ package enum AgentService {
     package static func installAndStart(appURL: URL) async throws {
         try await Task.detached {
             try serialized {
-                let executable = appURL.appendingPathComponent(
-                    "Contents/Library/LoginItems/MX Forward Agent.app/Contents/MacOS/MXForwardAgent")
+                let agentBundle = appURL.appendingPathComponent(
+                    "Contents/Library/LoginItems/MX Forward Agent.app")
+                let executable = agentBundle.appendingPathComponent("Contents/MacOS/MXForwardAgent")
                 let manager = FileManager.default
                 guard manager.isExecutableFile(atPath: executable.path) else {
                     throw IPCError("Build/open the bundled MX Forward.app to install the mouse agent")
+                }
+                // Register both bundles without launching or activating either app.
+                for bundle in [appURL, agentBundle] {
+                    let status = LSRegisterURL(bundle as CFURL, true)
+                    guard status == noErr else {
+                        throw IPCError("Could not register \(bundle.lastPathComponent): \(status)")
+                    }
                 }
                 let logs = manager.homeDirectoryForCurrentUser.appendingPathComponent(
                     "Library/Logs/MX Forward")

@@ -13,6 +13,11 @@ for name in MXForward MXForwardHeadless; do
     printf 'Quit %s before installing.\n' "$name" >&2; exit 1
   fi
 done
+app_signer="$(/usr/bin/python3 scripts/signing.py check "$source_app" local.baggie.mxforward)"
+agent_signer="$(/usr/bin/python3 scripts/signing.py check "$source_app/Contents/Library/LoginItems/MX Forward Agent.app" local.baggie.mxforward.agent)"
+if [ "$app_signer" != "$agent_signer" ]; then
+  printf 'The app and agent must use the same signing certificate. Rebuild before installing.\n' >&2; exit 1
+fi
 /usr/bin/codesign --verify --deep --strict "$source_app"
 job="gui/$(id -u)/local.baggie.mxforward.agent"
 if launchctl print "$job" >/dev/null 2>&1; then

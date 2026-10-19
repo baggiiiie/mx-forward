@@ -7,6 +7,7 @@ for name in MXForward MXForwardAgent MXForwardHeadless; do
     exit 1
   fi
 done
+identity="$(/usr/bin/python3 scripts/signing.py identity)"
 swift build -c release --product MXForward
 swift build -c release --product MXForwardAgent
 bin_path="$(swift build -c release --show-bin-path)"
@@ -23,14 +24,13 @@ for path, identifier, name, executable, agent in [
 ]:
     info = dict(CFBundleIdentifier=identifier, CFBundleName=name, CFBundleDisplayName=name,
                 CFBundleExecutable=executable, CFBundlePackageType='APPL',
-                CFBundleShortVersionString='0.7.1', CFBundleVersion='12',
+                CFBundleShortVersionString='0.7.2', CFBundleVersion='13',
                 LSMinimumSystemVersion='14.0', NSHighResolutionCapable=True,
                 NSInputMonitoringUsageDescription='Read Logitech Bolt mouse buttons and held movement for mappings.')
     if agent: info['LSUIElement'] = True
     with open(pathlib.Path(path) / 'Contents/Info.plist', 'wb') as f: plistlib.dump(info, f)
 PY
-identity="${MX_FORWARD_SIGN_IDENTITY:--}"
-/usr/bin/codesign --force --sign "$identity" --identifier local.baggie.mxforward.agent "$agent_path"
-/usr/bin/codesign --force --sign "$identity" --identifier local.baggie.mxforward "$app_path"
+/usr/bin/python3 scripts/signing.py sign "$agent_path" local.baggie.mxforward.agent --identity "$identity"
+/usr/bin/python3 scripts/signing.py sign "$app_path" local.baggie.mxforward --identity "$identity"
 /usr/bin/codesign --verify --deep --strict "$app_path"
 printf 'Built %s\nInstall: ./scripts/install-app.sh\n' "$app_path"

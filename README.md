@@ -36,7 +36,13 @@ swift run ProxyChecks
 open '/Applications/MX Forward.app'
 ```
 
-Stop the agent and close the settings UI before packaging/replacing the bundle. Builds are ad-hoc signed by default; macOS may require you to grant permissions again after a rebuild. Set `MX_FORWARD_SIGN_IDENTITY` to use your signing certificate. Builds are not notarized.
+Stop the agent and close the settings UI before packaging/replacing the bundle. Packaged builds (`./scripts/build-app.sh`) use a **stable code-signing certificate**, not an ad-hoc signature, so routine rebuilds keep the same macOS permission identity. Builds are not notarized.
+
+On the first build, the script uses the only valid code-signing identity in your Keychain, or you can select one with `MX_FORWARD_SIGN_IDENTITY` (its exact name or SHA-1 fingerprint). It remembers the fingerprint in `~/.config/mx-forward/signing-identity` and reuses it. The private key stays in Keychain. If the saved certificate is missing or expired, the build stops rather than silently changing identities. If no certificate exists, create a Code Signing certificate in Keychain Access or Xcode first.
+
+**Switching from the old ad-hoc build requires one-time reapproval of existing permissions.** Remove and re-add the installed agent's Accessibility entry to approve the new signer; do the same for the settings UI if you use its system-shortcut recorder. After that, keep the same certificate, bundle identifiers, and installation path. Replacing the certificate or revoking permissions can still require a new grant. The installer rejects ad-hoc builds to prevent accidental regressions.
+
+Run `./scripts/check-signing.sh` to verify that two different UI/agent builds have identical certificate requirements. This test signs temporary apps but never launches them or changes permissions.
 
 The installer starts the per-user agent without opening or activating the UI. The UI also installs/starts the bundled agent when opened. The job is `~/Library/LaunchAgents/local.baggie.mxforward.agent.plist`; no root daemon is installed. Use the menu bar or **Setup → Stop agent and disable startup** to remove it, or:
 

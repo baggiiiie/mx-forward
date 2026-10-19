@@ -16,9 +16,8 @@ package final class MouseEngine: ObservableObject {
     @Published package private(set) var enabled = false
     @Published package private(set) var busy = false
     @Published package private(set) var connected = false
-    @Published package private(set) var accessibility = AXIsProcessTrusted()
-    @Published package private(set) var inputMonitoring =
-        IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
+    @Published package private(set) var accessibility = false
+    @Published package private(set) var inputMonitoring = false
     @Published package private(set) var logitechRunning = false
     @Published package private(set) var needsRelease = false
     @Published package private(set) var heldControls = Set<MouseControl>()
@@ -329,6 +328,7 @@ package final class MouseEngine: ObservableObject {
     }
 
     private func refreshPermissions() {
+        guard startsHardware else { return }
         let trusted = AXIsProcessTrusted()
         if accessibility != trusted { accessibility = trusted }
         let monitoring = IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted

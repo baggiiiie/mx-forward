@@ -156,6 +156,9 @@ enum AgentChecks {
         let second = AgentConnection(endpoint: listener.endpoint)
         var response = try await first.exchange(AgentRequest(.snapshot))
         try require(response.state?.connected == false, "Offline engine connected to hardware")
+        try require(
+            response.state?.accessibility == false && response.state?.inputMonitoring == false,
+            "Offline engine queried the host's input permissions")
         try require(response.state?.preferences.wheelSpeed == 1.25, "Snapshot lost settings")
         let base = engine.preferences
         var edited = base

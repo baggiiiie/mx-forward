@@ -17,7 +17,7 @@ The installer, or opening the settings app, creates `~/Library/LaunchAgents/loca
 
 **Pause** restores controls and remembers not to resume. **Stop agent and disable startup** removes the login job and restores controls, but keeps the saved Enable/Pause choice. Opening the settings UI installs the agent again; Setup also has a reconnect button. Closing the UI does neither of those things.
 
-Grant Accessibility to **MX Forward Agent**, not just the settings app or the old prototype. Add Input Monitoring only if discovery is blocked. The settings UI may separately need Accessibility to record system shortcuts and run its zoom verification buttons. Nothing edits the TCC database or grants itself permission.
+Grant Accessibility to **MX Forward Agent**, not just the settings app or the old prototype. Add Input Monitoring only if discovery is blocked. The settings UI may separately need Accessibility to record system shortcuts and run its zoom verification buttons. Installation registers both bundles with LaunchServices without activating either app. Hardware-free engines don't query input permissions. Nothing edits the TCC database or grants itself permission.
 
 Preferences still use the original `local.baggie.mxforward` UserDefaults suite. JSON stays at `~/.config/mx-forward/config.json`. Only the agent writes production settings. Broken JSON is left alone until the user repairs or replaces it.
 
@@ -39,7 +39,9 @@ If recovery fails, the file is kept for another attempt. Power-cycle an unrespon
 
 ## Building and testing
 
-Stop the installed agent and close the UI before packaging or replacing the app. The build signs both bundles; installation verifies the source bundle before stopping the old agent. Use a stable `MX_FORWARD_SIGN_IDENTITY` to reduce repeated permission prompts. Ad-hoc builds aren't notarized.
+Stop the installed agent and close the UI before packaging or replacing the app. The build signs both bundles with a saved certificate fingerprint and a designated requirement pinned to that certificate and bundle ID—not the binary's changing hash. The identity is selected once from Keychain or `MX_FORWARD_SIGN_IDENTITY`, then saved in `~/.config/mx-forward/signing-identity`. Missing or expired saved certificates fail the build; they aren't silently replaced. Private keys aren't exported.
+
+Installation checks the stable requirements and matching certificates before stopping the old agent, and rejects ad-hoc builds. Moving from the old ad-hoc signature requires one fresh permission grant. Routine rebuilds using the same certificate, identifiers, and install path should then retain grants. Certificate changes, revocation, and OS policy can still require approval. Builds aren't notarized.
 
 Hardware-free checks:
 
@@ -48,9 +50,10 @@ swift run ForwardCoreChecks
 swift run AgentChecks
 swift run ProxyChecks
 ./scripts/check-agent-launchd.sh
+./scripts/check-signing.sh  # requires the selected certificate
 ```
 
-These check core behavior, message limits, cancellation and reconnection, concurrent settings edits, in-flight Undo, failed saves, recording cleanup, config reloads, file locks, shutdown, and launchd restart. The launchd test kills only its own hardware-disabled process under a temporary service name. It doesn't touch the installed agent or production preferences.
+These check core behavior, message limits, cancellation and reconnection, concurrent settings edits, in-flight Undo, failed saves, recording cleanup, config reloads, file locks, shutdown, and launchd restart. The launchd test kills only its own hardware-disabled process under a temporary service name. It doesn't touch the installed agent or production preferences. Signing checks build two different versions of a temporary app and nested helper, verify that their code hashes differ but their designated requirements match, and check that an ad-hoc replacement is rejected. The temporary apps never run and no permission grants are changed.
 
 With the UI closed, both agents stopped, and an awake Bolt mouse:
 
