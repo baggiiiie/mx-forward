@@ -1,4 +1,5 @@
 import AppKit
+import ForwardCore
 
 /// Replays pointer movement while the mouse sends raw drag reports.
 @MainActor
@@ -40,6 +41,17 @@ package struct PointerOutput {
         // Keep our own position: posted events may not have reached macOS yet.
         location = target
         return event
+    }
+
+    package func scrollEvent(_ action: DragScrollAction) -> CGEvent? {
+        // Scrolling at the press position would pull the cursor back.
+        WheelOutput.dragEvent(action, at: location)
+    }
+
+    package func sendScroll(_ action: DragScrollAction) -> Bool {
+        guard AXIsProcessTrusted(), let event = scrollEvent(action) else { return false }
+        event.post(tap: .cghidEventTap)
+        return true
     }
 
     package mutating func send(dx: Int16, dy: Int16) -> Bool {

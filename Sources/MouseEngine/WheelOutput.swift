@@ -34,12 +34,6 @@ package enum WheelOutput {
         return event(pixels: y, horizontal: x, phase: phase, at: point)
     }
 
-    package static func sendDrag(_ action: DragScrollAction, at point: CGPoint) -> Bool {
-        guard AXIsProcessTrusted(), let event = dragEvent(action, at: point) else { return false }
-        event.post(tap: .cghidEventTap)
-        return true
-    }
-
     package static func send(pixels: Int32) -> Bool {
         guard pixels != 0 else { return true }
         guard AXIsProcessTrusted(), let event = event(pixels: pixels) else { return false }

@@ -515,12 +515,12 @@ package final class MouseEngine: ObservableObject {
             case .zoom(let zoom): perform(zoom, from: control, testMode: testMode)
             case .pointer(let dx, let dy):
                 // Keep normal cursor movement in test mode too.
-                if dragPointer?.send(dx: dx, dy: dy) == false {
+                if dragPointer?.send(dx: dx, dy: dy) != true {
                     status = "Pointer movement could not be sent. Check Accessibility."
                 }
             case .scroll(let scroll):
                 lastAction = (testMode ? "Test: " : "") + "\(control.name) drag → Scroll & navigate"
-                if !testMode && !WheelOutput.sendDrag(scroll, at: actionAnchors[control] ?? .zero) {
+                if !testMode && dragPointer?.sendScroll(scroll) != true {
                     status = "Scrolling could not be sent. Check Accessibility."
                 }
             }

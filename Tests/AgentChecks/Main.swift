@@ -11,6 +11,7 @@ enum AgentChecks {
         NSApplication.shared.setActivationPolicy(.prohibited)
         Task {
             do {
+                try checkDragScrollPointer()
                 try checkCodecAndLock()
                 try await checkConnectionLifecycle()
                 try await checkPreferencesStore()
@@ -42,6 +43,47 @@ enum AgentChecks {
             guard ContinuousClock.now < deadline else { throw IPCError("Timed out waiting for a test reply") }
             try await Task.sleep(for: .milliseconds(10))
         }
+    }
+
+    private static func checkDragScrollPointer() throws {
+        var pointer = PointerOutput(
+            at: CGPoint(x: 50, y: 60),
+            displays: [CGRect(x: 0, y: 0, width: 200, height: 200)])
+        let reports: [(Int16, Int16, CGPoint)] = [
+            (10, -20, CGPoint(x: 60, y: 40)),
+            (10, -20, CGPoint(x: 70, y: 20)),
+            (.max, .min, CGPoint(x: 199, y: 0)),
+            (-1, 1, CGPoint(x: 198, y: 1)),
+        ]
+        let phases: [(DragScrollAction, NSEvent.Phase)] = [
+            (.begin, .began), (.move(x: 12, y: -34), .changed),
+            (.end, .ended), (.cancel, .cancelled),
+        ]
+        // Build events without posting them, as if macOS hasn't processed them yet.
+        for (dx, dy, expected) in reports {
+            guard let movement = pointer.event(dx: dx, dy: dy) else {
+                throw IPCError("Could not create pointer event")
+            }
+            try require(
+                movement.location == expected && pointer.location == expected,
+                "Queued pointer movement lost distance or escaped the display")
+            for (action, phase) in phases {
+                guard let scroll = pointer.scrollEvent(action), let native = NSEvent(cgEvent: scroll) else {
+                    throw IPCError("Could not create drag scroll event")
+                }
+                try require(
+                    scroll.location == expected,
+                    "Scroll would pull the cursor away from its replayed position")
+                try require(native.phase == phase, "Drag scroll phase changed")
+                try require(native.hasPreciseScrollingDeltas, "Drag scroll lost pixel precision")
+                let moving = phase == .changed
+                try require(
+                    native.scrollingDeltaX == (moving ? 12 : 0)
+                        && native.scrollingDeltaY == (moving ? -34 : 0),
+                    "Drag scroll deltas changed")
+            }
+        }
+        print("PASS: drag scroll follows queued pointer movement, including display edges and all phases")
     }
 
     private static func checkCodecAndLock() throws {
