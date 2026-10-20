@@ -2,8 +2,10 @@ import CoreGraphics
 
 /// macOS gesture fields are undocumented; keep them in one adapter.
 public enum ZoomEvent {
+    private static let source = CGEventSource(stateID: .privateState)
+
     public static func make(_ action: ZoomAction, at point: CGPoint) -> CGEvent? {
-        guard let source = CGEventSource(stateID: .privateState),
+        guard let source,
             let event = CGEvent(source: source)
         else { return nil }
         event.type = CGEventType(rawValue: 29)!

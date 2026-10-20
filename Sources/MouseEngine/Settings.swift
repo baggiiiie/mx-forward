@@ -426,6 +426,8 @@ package func clamp(_ value: Double, _ range: ClosedRange<Double>, fallback: Doub
 }
 
 package enum KeyboardOutput {
+    private static let source = CGEventSource(stateID: .privateState)
+
     package static func send(_ shortcut: Shortcut) -> Bool {
         guard AXIsProcessTrusted(), let (down, up) = events(for: shortcut) else { return false }
         down.post(tap: .cghidEventTap)
@@ -434,7 +436,7 @@ package enum KeyboardOutput {
     }
 
     package static func events(for shortcut: Shortcut) -> (CGEvent, CGEvent)? {
-        guard let source = CGEventSource(stateID: .privateState),
+        guard let source,
             let down = CGEvent(keyboardEventSource: source, virtualKey: shortcut.keyCode, keyDown: true),
             let up = CGEvent(keyboardEventSource: source, virtualKey: shortcut.keyCode, keyDown: false)
         else { return nil }

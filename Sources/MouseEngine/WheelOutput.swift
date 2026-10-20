@@ -2,11 +2,14 @@ import AppKit
 import ForwardCore
 
 package enum WheelOutput {
+    // Reuse the source so scroll events don't accumulate shared memory.
+    private static let source = CGEventSource(stateID: .privateState)
+
     package static func event(
         pixels: Int32, horizontal: Int32 = 0, phase: CGScrollPhase? = nil,
         at point: CGPoint? = nil
     ) -> CGEvent? {
-        guard let source = CGEventSource(stateID: .privateState),
+        guard let source,
             let event = CGEvent(
                 scrollWheelEvent2Source: source, units: .pixel,
                 wheelCount: horizontal == 0 && phase == nil ? 1 : 2,

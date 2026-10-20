@@ -12,6 +12,7 @@ enum AgentChecks {
         Task {
             do {
                 try checkDragScrollPointer()
+                try checkEventMemory()
                 try checkCodecAndLock()
                 try await checkConnectionLifecycle()
                 try await checkPreferencesStore()
@@ -84,6 +85,37 @@ enum AgentChecks {
             }
         }
         print("PASS: drag scroll follows queued pointer movement, including display edges and all phases")
+    }
+
+    private static func checkEventMemory() throws {
+        func footprint() throws -> UInt64 {
+            var info = task_vm_info_data_t()
+            var count = mach_msg_type_number_t(
+                MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+            let result = withUnsafeMutablePointer(to: &info) {
+                $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                    task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+                }
+            }
+            try require(result == KERN_SUCCESS, "Could not measure event memory")
+            return info.phys_footprint
+        }
+        let builders: [(String, () -> Bool)] = [
+            ("Scroll", { WheelOutput.event(pixels: 12) != nil }),
+            ("Shortcut", { KeyboardOutput.events(for: .forward) != nil }),
+            ("Click", { ActionOutput.clickEvents(button: .left, at: .zero) != nil }),
+            ("Zoom", { ZoomEvent.make(.magnify(0.01), at: .zero) != nil }),
+        ]
+        for (name, build) in builders {
+            try require(autoreleasepool(invoking: build), "Could not create \(name) event")
+            let before = try footprint()
+            for _ in 0..<1_024 {
+                try require(autoreleasepool(invoking: build), "Could not create \(name) event")
+            }
+            let after = try footprint()
+            try require(after <= before + 8 * 1024 * 1024, "\(name) events keep growing memory")
+            print("PASS: 1,024 \(name.lowercased()) events grew memory by \(Int64(after) - Int64(before)) bytes")
+        }
     }
 
     private static func checkCodecAndLock() throws {

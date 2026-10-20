@@ -2,6 +2,8 @@ import AppKit
 import ForwardCore
 
 package enum ActionOutput {
+    private static let source = CGEventSource(stateID: .privateState)
+
     /// The keys an action presses, or nil when it doesn't press any.
     package static func shortcut(for action: ButtonAction) -> Shortcut? {
         action.kind == .shortcut ? action.shortcut : WindowNavigationOutput.currentShortcut(action.kind)
@@ -41,7 +43,7 @@ package enum ActionOutput {
         case .right: types = (.rightMouseDown, .rightMouseUp)
         default: types = (.otherMouseDown, .otherMouseUp)
         }
-        guard let source = CGEventSource(stateID: .privateState),
+        guard let source,
             let down = CGEvent(
                 mouseEventSource: source, mouseType: types.0, mouseCursorPosition: point, mouseButton: button),
             let up = CGEvent(

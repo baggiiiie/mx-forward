@@ -356,9 +356,12 @@ package final class MouseEngine: ObservableObject {
         if accessibility != trusted { accessibility = trusted }
         let monitoring = IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
         if inputMonitoring != monitoring { inputMonitoring = monitoring }
-        let logitech = NSWorkspace.shared.runningApplications.contains {
-            $0.bundleIdentifier == "com.logi.cp-dev-mgr"
-                || $0.executableURL?.lastPathComponent == "logioptionsplus_agent"
+        // Free temporary app data after each scan to prevent memory growth.
+        let logitech = autoreleasepool {
+            NSWorkspace.shared.runningApplications.contains {
+                $0.bundleIdentifier == "com.logi.cp-dev-mgr"
+                    || $0.executableURL?.lastPathComponent == "logioptionsplus_agent"
+            }
         }
         if logitechRunning != logitech { logitechRunning = logitech }
     }
