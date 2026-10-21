@@ -13,7 +13,8 @@ swift build -c release --product MXForwardAgent
 bin_path="$(swift build -c release --show-bin-path)"
 app_path="$PWD/dist/MX Forward.app"
 agent_path="$app_path/Contents/Library/LoginItems/MX Forward Agent.app"
-mkdir -p "$app_path/Contents/MacOS" "$agent_path/Contents/MacOS"
+mkdir -p "$app_path/Contents/MacOS" "$app_path/Contents/Resources" "$agent_path/Contents/MacOS"
+/usr/bin/ditto "$bin_path/MXForward_MXForward.bundle" "$app_path/Contents/Resources/MXForward_MXForward.bundle"
 cp "$bin_path/MXForward" "$app_path/Contents/MacOS/MXForward"
 cp "$bin_path/MXForwardAgent" "$agent_path/Contents/MacOS/MXForwardAgent"
 /usr/bin/python3 - "$app_path" "$agent_path" <<'PY'

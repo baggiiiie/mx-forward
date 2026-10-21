@@ -1,3 +1,4 @@
+import AppKit
 import MouseEngine
 import ForwardCore
 import SwiftUI
@@ -48,13 +49,13 @@ enum MouseButton: String, CaseIterable, Identifiable {
     /// Position and size relative to the mouse body (0–1), rotation, and corner roundness.
     fileprivate var hotspot: (center: CGPoint, size: CGSize, degrees: Double, roundness: CGFloat) {
         switch self {
-        case .wheelButton: return (CGPoint(x: 0.575, y: 0.23), .zero, 0, 0)
-        case .wheel: return (CGPoint(x: 0.575, y: 0.175), CGSize(width: 0.085, height: 0.16), 0, 0.5)
-        case .top: return (CGPoint(x: 0.585, y: 0.315), CGSize(width: 0.075, height: 0.045), 0, 0.4)
-        case .thumbWheel: return (CGPoint(x: 0.215, y: 0.33), CGSize(width: 0.06, height: 0.13), -18, 0.5)
-        case .forward: return (CGPoint(x: 0.13, y: 0.46), CGSize(width: 0.06, height: 0.085), -10, 0.45)
-        case .back: return (CGPoint(x: 0.105, y: 0.565), CGSize(width: 0.06, height: 0.085), -6, 0.45)
-        case .gesture: return (CGPoint(x: 0.07, y: 0.685), CGSize(width: 0.05, height: 0.1), 8, 0.5)
+        case .wheelButton: return (CGPoint(x: 0.415, y: 0.087), .zero, 0, 0)
+        case .wheel: return (CGPoint(x: 0.397, y: 0.063), CGSize(width: 0.115, height: 0.085), -32, 0.2)
+        case .top: return (CGPoint(x: 0.479, y: 0.164), CGSize(width: 0.065, height: 0.04), -32, 0.2)
+        case .thumbWheel: return (CGPoint(x: 0.203, y: 0.34), CGSize(width: 0.08, height: 0.155), -27, 0.3)
+        case .forward: return (CGPoint(x: 0.164, y: 0.385), CGSize(width: 0.025, height: 0.065), -26, 0.4)
+        case .back: return (CGPoint(x: 0.212, y: 0.466), CGSize(width: 0.025, height: 0.077), -29, 0.4)
+        case .gesture: return (CGPoint(x: 0.076, y: 0.704), CGSize(width: 0.022, height: 0.049), -10, 0.5)
         }
     }
 
@@ -66,7 +67,7 @@ enum MouseButton: String, CaseIterable, Identifiable {
     }
 }
 
-/// A top-down MX Master 3S. Click a control or its label to select it.
+/// An MX Master 3S with controls aligned to the bundled product image. Click a control or its label to select it.
 struct MouseIllustration: View {
     @Binding var selection: MouseButton
     var summaries: [MouseButton: String]
@@ -76,8 +77,10 @@ struct MouseIllustration: View {
     @StateObject private var hover = HoverState()
     private var hovered: MouseButton? { hover.button }
 
+    private static let productImage = NSImage(
+        contentsOf: Bundle.module.url(forResource: "mx-master-3s", withExtension: "png")!)!
     private static let stageSize = CGSize(width: 600, height: 500)
-    private let mouseRect = CGRect(x: 190, y: 20, width: 232, height: 450)
+    private let mouseRect = CGRect(x: 172, y: 72, width: 280, height: 280 * 623 / 580)
     private let labelWidth: CGFloat = 160
 
     private func point(_ unit: CGPoint) -> CGPoint {
@@ -100,11 +103,6 @@ struct MouseIllustration: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            Ellipse()
-                .fill(Color.black.opacity(0.18))
-                .frame(width: mouseRect.width * 0.8, height: 34)
-                .blur(radius: 22)
-                .position(x: mouseRect.midX + 10, y: mouseRect.maxY - 8)
             mouseBody
             leaders
             ForEach(MouseButton.allCases.filter { $0.drawnOn == $0 }) { button in hotspot(button) }
@@ -114,29 +112,15 @@ struct MouseIllustration: View {
     }
 
     private var mouseBody: some View {
-        let shell = LinearGradient(
-            colors: [Color(white: 0.30), Color(white: 0.17), Color(white: 0.12)],
-            startPoint: .topTrailing, endPoint: .bottomLeading)
-        let sheen = RadialGradient(
-            colors: [Color.white.opacity(0.13), .clear], center: UnitPoint(x: 0.66, y: 0.5),
-            startRadius: 0, endRadius: mouseRect.width * 0.55)
-        return ZStack {
-            MouseBodyShape().fill(shell)
-            MouseBodyShape().fill(sheen)
-            ThumbRestShape().fill(Color.black.opacity(0.28))
-            ThumbRestShape().stroke(Color.white.opacity(0.06), lineWidth: 1)
-            ButtonSeamsShape().stroke(Color.black.opacity(0.55), lineWidth: 1.5)
-            ButtonSeamsShape().stroke(Color.white.opacity(0.07), lineWidth: 0.5).offset(x: 0.5, y: 0.8)
-            Text("MX")
-                .font(.system(size: 20, weight: .heavy, design: .rounded))
-                .foregroundStyle(Color.white.opacity(0.10))
-                .position(x: mouseRect.width * 0.6, y: mouseRect.height * 0.8)
-        }
-        .clipShape(MouseBodyShape())
-        .overlay(MouseBodyShape().stroke(Color.white.opacity(0.12), lineWidth: 1))
-        .frame(width: mouseRect.width, height: mouseRect.height)
-        .offset(x: mouseRect.minX, y: mouseRect.minY)
-        .allowsHitTesting(false)
+        Image(nsImage: Self.productImage)
+            .resizable()
+            .interpolation(.high)
+            .scaledToFit()
+            .frame(width: mouseRect.width, height: mouseRect.height)
+            .shadow(color: .black.opacity(0.16), radius: 10, x: 2, y: 8)
+            .offset(x: mouseRect.minX, y: mouseRect.minY)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 
     private var leaders: some View {
@@ -170,37 +154,26 @@ struct MouseIllustration: View {
             cornerRadius: min(size.width, size.height) * spot.roundness, style: .continuous)
         let selected = selection.drawnOn == button
         let isPressed = pressed.contains { $0.drawnOn == button }
-        let fill: Color =
-            isPressed
-            ? .green
-            : selected
-                ? .accentColor
-                : hovered?.drawnOn == button ? Color.accentColor.opacity(0.55) : Color(white: 0.38)
-        return
+        let active = selected || hovered?.drawnOn == button || isPressed
+        let tint: Color = isPressed ? .green : .accentColor
+        return Button {
+            selection = button
+        } label: {
             shape
-            .fill(fill.gradient)
-            .overlay(
-                shape.stroke(Color.white.opacity(selected ? 0.9 : 0.25), lineWidth: selected ? 1.5 : 0.8)
-            )
-            .overlay {
-                if button == .wheel || button == .thumbWheel {
-                    WheelRidges().stroke(Color.black.opacity(0.35), lineWidth: 1)
-                        .padding(3).clipShape(shape)
-                }
-            }
-            .shadow(color: selected ? Color.accentColor.opacity(0.8) : .clear, radius: 8)
-            .frame(width: size.width, height: size.height)
-            .rotationEffect(.degrees(spot.degrees))
-            .contentShape(shape.inset(by: -6))
-            .position(point(spot.center))
-            .onTapGesture { selection = button }
-            .onHover { hover.update(button, inside: $0) }
-            .accessibilityElement()
-            .accessibilityLabel(button.title)
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAddTraits(selected ? .isSelected : [])
-            .animation(.easeOut(duration: 0.12), value: isPressed)
-            .animation(.easeOut(duration: 0.15), value: selected)
+                .fill(tint.opacity(active ? 0.22 : 0))
+                .overlay(shape.stroke(tint.opacity(active ? 1 : 0), lineWidth: 1.5))
+                .shadow(color: tint.opacity(active ? 0.35 : 0), radius: 5)
+                .frame(width: size.width, height: size.height)
+                .rotationEffect(.degrees(spot.degrees))
+                .contentShape(shape.inset(by: -6))
+        }
+        .buttonStyle(.plain)
+        .position(point(spot.center))
+        .onHover { hover.update(button, inside: $0) }
+        .accessibilityLabel(button.title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .animation(.easeOut(duration: 0.12), value: isPressed)
+        .animation(.easeOut(duration: 0.15), value: selected)
     }
 
     private func label(_ button: MouseButton) -> some View {
@@ -249,71 +222,6 @@ struct MouseIllustration: View {
         .onHover { hover.update(button, inside: $0) }
         .position(labelCenter(button))
         .accessibilityLabel("\(button.title): \(isOn ? summaries[button] ?? "" : "Off")")
-    }
-}
-
-private struct MouseBodyShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-            CGPoint(x: rect.minX + x * rect.width, y: rect.minY + y * rect.height)
-        }
-        var path = Path()
-        path.move(to: p(0.56, 0.012))
-        path.addCurve(to: p(0.90, 0.10), control1: p(0.74, 0.005), control2: p(0.86, 0.04))
-        path.addCurve(to: p(0.96, 0.46), control1: p(0.95, 0.18), control2: p(0.97, 0.32))
-        path.addCurve(to: p(0.81, 0.93), control1: p(0.96, 0.66), control2: p(0.93, 0.84))
-        path.addCurve(to: p(0.40, 0.995), control1: p(0.70, 1.0), control2: p(0.52, 1.0))
-        path.addCurve(to: p(0.03, 0.74), control1: p(0.20, 0.985), control2: p(0.06, 0.88))
-        path.addCurve(to: p(0.04, 0.47), control1: p(0.0, 0.64), control2: p(0.0, 0.54))
-        path.addCurve(to: p(0.22, 0.09), control1: p(0.08, 0.32), control2: p(0.13, 0.16))
-        path.addCurve(to: p(0.56, 0.012), control1: p(0.31, 0.03), control2: p(0.44, 0.015))
-        path.closeSubpath()
-        return path
-    }
-}
-
-private struct ThumbRestShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-            CGPoint(x: rect.minX + x * rect.width, y: rect.minY + y * rect.height)
-        }
-        var path = Path()
-        path.move(to: p(0.17, 0.15))
-        path.addCurve(to: p(0.31, 0.56), control1: p(0.29, 0.25), control2: p(0.33, 0.42))
-        path.addCurve(to: p(0.14, 0.90), control1: p(0.29, 0.70), control2: p(0.23, 0.83))
-        path.addLine(to: p(-0.1, 0.9))
-        path.addLine(to: p(-0.1, 0.15))
-        path.closeSubpath()
-        return path
-    }
-}
-
-private struct ButtonSeamsShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        func p(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-            CGPoint(x: rect.minX + x * rect.width, y: rect.minY + y * rect.height)
-        }
-        var path = Path()
-        path.move(to: p(0.565, 0.02))
-        path.addLine(to: p(0.57, 0.085))
-        path.move(to: p(0.585, 0.35))
-        path.addCurve(to: p(0.60, 0.43), control1: p(0.59, 0.38), control2: p(0.595, 0.41))
-        path.move(to: p(0.30, 0.25))
-        path.addCurve(to: p(0.94, 0.40), control1: p(0.48, 0.44), control2: p(0.76, 0.47))
-        return path
-    }
-}
-
-private struct WheelRidges: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        let count = 9
-        for index in 1..<count {
-            let y = rect.minY + rect.height * CGFloat(index) / CGFloat(count)
-            path.move(to: CGPoint(x: rect.minX, y: y))
-            path.addLine(to: CGPoint(x: rect.maxX, y: y))
-        }
-        return path
     }
 }
 

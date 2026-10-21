@@ -13,7 +13,9 @@ let package = Package(
         .target(name: "MouseEngine", dependencies: ["ForwardCore"]),
         .target(name: "AgentSupport", dependencies: ["MouseEngine", "ForwardCore"]),
         .target(name: "SettingsClient", dependencies: ["ForwardCore", "MouseEngine", "AgentSupport"]),
-        .executableTarget(name: "MXForward", dependencies: ["ForwardCore", "MouseEngine", "SettingsClient"]),
+        .executableTarget(
+            name: "MXForward", dependencies: ["ForwardCore", "MouseEngine", "SettingsClient"],
+            resources: [.process("Resources")]),
         .executableTarget(name: "MXForwardAgent", dependencies: ["MouseEngine", "AgentSupport"]),
         .target(name: "CheckSupport", dependencies: ["AgentSupport"], path: "Tests/CheckSupport"),
         .executableTarget(
