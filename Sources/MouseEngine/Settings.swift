@@ -58,7 +58,7 @@ package struct ButtonAction: Codable, Equatable {
     package enum Kind: String, Codable, CaseIterable, Identifiable {
         case none, shortcut, modifierClick, missionControl, appExpose, desktopLeft, desktopRight, smartZoom,
             middleClick
-        case zoom, scroll
+        case zoom, scroll, script
         package var id: Self { self }
         package var label: String {
             switch self {
@@ -73,6 +73,7 @@ package struct ButtonAction: Codable, Equatable {
             case .middleClick: return "Middle click"
             case .zoom: return "Zoom"
             case .scroll: return "Scroll & navigate"
+            case .script: return "Run script"
             }
         }
         package static func choices(for slot: ButtonSlot) -> [Kind] {
@@ -87,12 +88,16 @@ package struct ButtonAction: Codable, Equatable {
     package var kind: Kind
     package var shortcut: Shortcut?
     package var modifiers: UInt64?
+    package var scriptPath: String?
 
-    package init(_ kind: Kind, shortcut: Shortcut? = nil, modifiers: UInt64? = nil) {
+    package init(
+        _ kind: Kind, shortcut: Shortcut? = nil, modifiers: UInt64? = nil, scriptPath: String? = nil
+    ) {
         self.kind = kind
         self.shortcut = kind == .shortcut ? shortcut : nil
         let flags = (modifiers ?? 0) & KeyboardModifiers.mask.rawValue
         self.modifiers = kind == .modifierClick && flags != 0 ? flags : nil
+        self.scriptPath = kind == .script && scriptPath?.isEmpty == false ? scriptPath : nil
     }
 
     package static func shortcut(_ shortcut: Shortcut?) -> ButtonAction {
@@ -102,6 +107,9 @@ package struct ButtonAction: Codable, Equatable {
     package var isNone: Bool { kind == .none }
     package var label: String {
         switch kind {
+        case .script:
+            guard let scriptPath, !scriptPath.isEmpty else { return "Script not set" }
+            return "Run \((scriptPath as NSString).lastPathComponent)"
         case .shortcut: return shortcut?.label ?? "Shortcut not set"
         case .modifierClick:
             return modifiers.map {
@@ -181,7 +189,9 @@ package struct ButtonMapping: Codable, Equatable {
             let action = value[slot]
             value[slot] =
                 ButtonAction.Kind.choices(for: slot).contains(action.kind)
-                ? ButtonAction(action.kind, shortcut: action.shortcut, modifiers: action.modifiers)
+                ? ButtonAction(
+                    action.kind, shortcut: action.shortcut, modifiers: action.modifiers,
+                    scriptPath: action.scriptPath)
                 : ButtonAction(.none)
         }
         if value.dragScroll {

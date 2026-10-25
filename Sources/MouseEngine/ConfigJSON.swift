@@ -94,6 +94,7 @@ enum ConfigAction: Codable, Equatable {
         var modifiers: [String]?
         var label: String?
         var clickWithModifiers: [String]?
+        var script: String?
     }
 
     init(from decoder: Decoder) throws {
@@ -106,7 +107,7 @@ enum ConfigAction: Codable, Equatable {
             if named("default") {
                 self = .default
             } else if let kind = ButtonAction.Kind.allCases.first(where: {
-                $0 != .shortcut && named($0.rawValue)
+                $0 != .shortcut && $0 != .script && named($0.rawValue)
             }) {
                 self = .action(ButtonAction(kind))
             } else {
@@ -117,6 +118,16 @@ enum ConfigAction: Codable, Equatable {
             }
         } else {
             let object = try container.decode(ActionObject.self)
+            if let path = object.script {
+                guard object.keyCode == nil, object.modifiers == nil, object.label == nil,
+                    object.clickWithModifiers == nil
+                else {
+                    throw DecodingError.dataCorruptedError(
+                        in: container, debugDescription: "A script action needs only a script path.")
+                }
+                self = .action(ButtonAction(.script, scriptPath: path))
+                return
+            }
             var modifiers: UInt64 = 0
             for name in object.clickWithModifiers ?? object.modifiers ?? [] {
                 guard let flag = ShortcutText.modifier(name) else {
@@ -156,6 +167,9 @@ enum ConfigAction: Codable, Equatable {
         switch self {
         case .default: try container.encode("default")
         case .action(let action):
+            if action.kind == .script {
+                return try container.encode(ActionObject(script: action.scriptPath ?? ""))
+            }
             if action.kind == .modifierClick, let modifiers = action.modifiers {
                 return try container.encode(
                     ActionObject(clickWithModifiers: ShortcutText.modifierNames(modifiers)))
@@ -300,7 +314,7 @@ package enum ConfigJSON {
     private static let keyOrder =
         ["testMode", "buttons"] + ConfigDocument.Buttons.names.map(\.0) + [
             "wheel", "thumbWheel", "enabled", "click", "hold", "up", "down", "left", "right",
-            "clickWithModifiers", "holdDelayMs",
+            "clickWithModifiers", "script", "holdDelayMs",
             "dragSensitivityPercent", "zoomSpeedPercent", "speedPercent", "accelerationPercent", "natural",
             "mode",
             "direction", "keyCode", "modifiers", "label",

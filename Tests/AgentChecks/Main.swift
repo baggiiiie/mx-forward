@@ -14,6 +14,7 @@ enum AgentChecks {
                 try checkDragScrollPointer()
                 try checkEventMemory()
                 try checkCodecAndLock()
+                try await checkScripts()
                 try await checkConnectionLifecycle()
                 try await checkPreferencesStore()
                 try await checkServer()
@@ -136,6 +137,63 @@ enum AgentChecks {
         owner = nil
         let nextOwner = try FileLock(url: url)
         withExtendedLifetime(nextOwner) {}
+    }
+
+    private static func checkScripts() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let script = directory.appendingPathComponent("a script ' $;.sh")
+        let contents = """
+            #!/bin/sh
+            printf started >> runs
+            /bin/sleep 0.1
+            printf done >> runs
+            """
+        try "#!/missing/interpreter\n".write(to: script, atomically: true, encoding: .utf8)
+        let action = ButtonAction(.script, scriptPath: script.path)
+        try require(!ActionOutput.send(action, at: .zero), "A non-executable script was accepted")
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+        try require(!ActionOutput.send(action, at: .zero), "A missing interpreter was accepted")
+        try contents.write(to: script, atomically: false, encoding: .utf8)
+        var preferences = Preferences()
+        for control in MouseControl.allCases {
+            for slot in ButtonSlot.allCases { preferences.buttons[control][slot] = action }
+        }
+        try require(preferences.normalized() == preferences, "Normalizing dropped script paths")
+        try require(
+            try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(preferences))
+                == preferences,
+            "Script paths did not survive preferences storage")
+        try require(
+            try ConfigJSON.apply(ConfigJSON.encode(preferences), to: Preferences()) == preferences,
+            "Script paths did not survive config JSON")
+        try expectFailure("A mixed script and shortcut was accepted") {
+            _ = try ConfigJSON.apply(
+                #"{"buttons":{"forward":{"click":{"script":"/tmp/test","keyCode":0}}}}"#,
+                to: preferences)
+        }
+        try require(ActionOutput.send(action, at: .zero), "Script launch failed")
+        try require(ActionOutput.send(action, at: .zero), "Repeated script trigger failed")
+        let alias = directory.appendingPathComponent("alias.sh")
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: script)
+        try require(
+            ActionOutput.send(ButtonAction(.script, scriptPath: alias.path), at: .zero),
+            "Script alias trigger failed")
+        let runs = directory.appendingPathComponent("runs")
+        try await wait { (try? String(contentsOf: runs, encoding: .utf8)) == "starteddone" }
+        try await wait {
+            if (try? String(contentsOf: runs, encoding: .utf8))?.hasPrefix("starteddonestarted") == true {
+                return true
+            }
+            _ = ActionOutput.send(action, at: .zero)
+            return false
+        }
+        try await wait { (try? String(contentsOf: runs, encoding: .utf8)) == "starteddonestarteddone" }
+        try require(
+            !ActionOutput.send(ButtonAction(.script, scriptPath: "/missing/script"), at: .zero),
+            "A missing script was accepted")
+        print("PASS: script actions persist for every button/slot, run asynchronously, and suppress overlap")
     }
 
     private static func checkConnectionLifecycle() async throws {

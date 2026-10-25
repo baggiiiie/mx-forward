@@ -9,12 +9,13 @@ package enum ActionOutput {
         action.kind == .shortcut ? action.shortcut : WindowNavigationOutput.currentShortcut(action.kind)
     }
 
-    /// Returns false when macOS refused the event.
+    @MainActor
     package static func send(_ action: ButtonAction, at point: CGPoint) -> Bool {
         switch action.kind {
         case .none, .zoom, .scroll: return true
         case .smartZoom: return ZoomOutput.send(.click, at: point)
         case .middleClick: return click(button: .center)
+        case .script: return ScriptOutput.send(action.scriptPath)
         case .modifierClick:
             guard let modifiers = action.modifiers, modifiers & KeyboardModifiers.mask.rawValue != 0 else {
                 return true
@@ -56,6 +57,36 @@ package enum ActionOutput {
             event.setIntegerValueField(.mouseEventClickState, value: 1)
         }
         return (down, up)
+    }
+}
+
+@MainActor
+private enum ScriptOutput {
+    private static var running: Set<String> = []
+
+    static func send(_ path: String?) -> Bool {
+        guard let path else { return false }
+        let expanded = (path as NSString).expandingTildeInPath
+        guard (expanded as NSString).isAbsolutePath else { return false }
+        let url = URL(fileURLWithPath: expanded).resolvingSymlinksInPath()
+        let key = url.path
+        guard running.insert(key).inserted else { return true }
+        let process = Process()
+        process.executableURL = url
+        process.currentDirectoryURL = url.deletingLastPathComponent()
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        process.terminationHandler = { _ in
+            Task { @MainActor in running.remove(key) }
+        }
+        do {
+            try process.run()
+            return true
+        } catch {
+            running.remove(key)
+            return false
+        }
     }
 }
 

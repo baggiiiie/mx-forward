@@ -258,7 +258,9 @@ private struct ClickableButtonForm: View {
             set: { kind in
                 let shortcut = value[slot].shortcut ?? ButtonMapping.defaults(for: control)[slot].shortcut
                 mapping.wrappedValue.set(
-                    ButtonAction(kind, shortcut: shortcut, modifiers: value[slot].modifiers), for: slot)
+                    ButtonAction(
+                        kind, shortcut: shortcut, modifiers: value[slot].modifiers,
+                        scriptPath: value[slot].scriptPath), for: slot)
             })
         let shortcut = Binding(
             get: { value[slot].shortcut },
@@ -287,6 +289,12 @@ private struct ClickableButtonForm: View {
                 Text("Hold the modifier keys, then release to save. Sends a left click at the pointer.")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            } else if value[slot].kind == .script {
+                ScriptPicker(
+                    path: Binding(
+                        get: { value[slot].scriptPath ?? "" },
+                        set: { mapping.wrappedValue[slot] = ButtonAction(.script, scriptPath: $0) }),
+                    accessibilityLabel: "\(inspector.button.title) \(title(slot).lowercased()) script")
             }
         }
     }
@@ -329,6 +337,33 @@ private struct ClickableButtonForm: View {
                     Text("Zoom uses native pinch events in apps that support them.").inspectorFootnote()
                 }
             }
+        }
+    }
+}
+
+private struct ScriptPicker: View {
+    @Binding var path: String
+    var accessibilityLabel: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                TextField("/path/to/script", text: $path)
+                    .labelsHidden().textFieldStyle(.roundedBorder).accessibilityLabel(accessibilityLabel)
+                Button("Choose…") {
+                    let panel = NSOpenPanel()
+                    panel.prompt = "Choose Script"
+                    panel.begin { response in
+                        if response == .OK, let url = panel.url { path = url.path }
+                    }
+                }
+                .accessibilityLabel("Choose \(accessibilityLabel)")
+            }
+            Text(
+                "Choose an executable script with a #! interpreter line. Test mode only logs. While a script runs, extra triggers are ignored."
+            )
+            .font(.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

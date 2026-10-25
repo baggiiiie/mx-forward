@@ -561,7 +561,10 @@ package final class MouseEngine: ObservableObject {
         append(lastAction)
         guard !testMode, !action.isNone else { return }
         if !ActionOutput.send(action, at: actionAnchors[control] ?? .zero) {
-            status = "\(control.name) action could not be sent. Check Accessibility."
+            status =
+                action.kind == .script
+                ? "Script could not be started. Check its path, executable permission, and #! interpreter."
+                : "\(control.name) action could not be sent. Check Accessibility."
         }
     }
 
