@@ -47,6 +47,7 @@ struct ConfigDocument: Codable, Equatable {
     struct Button: Codable, Equatable {
         var enabled: Bool?
         var click: ConfigAction?
+        var doubleClick: ConfigAction?
         var hold: ConfigAction?
         var up: ConfigAction?
         var down: ConfigAction?
@@ -59,6 +60,7 @@ struct ConfigDocument: Codable, Equatable {
         subscript(_ slot: ButtonSlot) -> ConfigAction? {
             switch slot {
             case .click: return click
+            case .doubleClick: return doubleClick
             case .hold: return hold
             case .up: return up
             case .down: return down
@@ -286,7 +288,8 @@ package enum ConfigJSON {
             let mapping = preferences.buttons[control]
             func action(_ slot: ButtonSlot) -> ConfigAction { .action(mapping[slot]) }
             buttons[control] = .init(
-                enabled: mapping.enabled, click: action(.click), hold: action(.hold), up: action(.up),
+                enabled: mapping.enabled, click: action(.click), doubleClick: action(.doubleClick),
+                hold: action(.hold), up: action(.up),
                 down: action(.down), left: action(.left), right: action(.right),
                 holdDelayMs: mapping.holdMilliseconds,
                 dragSensitivityPercent: percent(mapping.dragSensitivity),
@@ -313,7 +316,7 @@ package enum ConfigJSON {
 
     private static let keyOrder =
         ["testMode", "buttons"] + ConfigDocument.Buttons.names.map(\.0) + [
-            "wheel", "thumbWheel", "enabled", "click", "hold", "up", "down", "left", "right",
+            "wheel", "thumbWheel", "enabled", "click", "doubleClick", "hold", "up", "down", "left", "right",
             "clickWithModifiers", "script", "holdDelayMs",
             "dragSensitivityPercent", "zoomSpeedPercent", "speedPercent", "accelerationPercent", "natural",
             "mode",

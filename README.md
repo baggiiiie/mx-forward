@@ -18,9 +18,13 @@ open '/Applications/MX Forward.app'
 
 Close the settings UI and stop any running agent before packaging. Builds use a stable code-signing certificate (not ad-hoc, not notarized); set `MX_FORWARD_SIGN_IDENTITY` to choose one.
 
+## Button actions
+
+Each extra button supports click, double click, hold, and drag actions. Double click follows macOS’s double-click speed. Assigning it delays the single-click action while waiting for a second press. Left and right clicks retain their native behavior.
+
 ## Button scripts
 
-Choose **Run script** for any button’s click, hold, or drag action, then choose a script or enter its absolute path (`~` is supported). Scripts must be executable (`chmod +x /path/to/script`) and start with an interpreter line such as `#!/bin/zsh` or `#!/usr/bin/env python3`.
+Choose **Run script** for any button action, then choose a script or enter its absolute path (`~` is supported). Scripts must be executable (`chmod +x /path/to/script`) and start with an interpreter line such as `#!/bin/zsh` or `#!/usr/bin/env python3`.
 
 Scripts run without opening Terminal, with their own folder as the working directory. They inherit the agent’s environment, so use absolute paths for tools outside the system PATH. Input and output go to `/dev/null`. Repeated triggers for the same script are ignored until it exits. Test mode logs the action without running it.
 

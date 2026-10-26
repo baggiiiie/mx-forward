@@ -1,7 +1,7 @@
 import Foundation
 
 public enum ButtonSlot: String, Codable, CaseIterable {
-    case click, hold, up, down, left, right
+    case click, doubleClick, hold, up, down, left, right
     public static let directions: [ButtonSlot] = [.up, .down, .left, .right]
 }
 
@@ -25,6 +25,7 @@ public struct ButtonGesture {
     public struct Options: Equatable {
         /// Nil turns holds into clicks.
         public var holdDelay: TimeInterval?
+        public var doubleClickInterval: TimeInterval?
         /// Movement in HID counts needed to pick a direction.
         public var dragDistance: Double
         /// Vertical movement zooms continuously instead of picking up or down.
@@ -37,9 +38,11 @@ public struct ButtonGesture {
         public init(
             holdDelay: TimeInterval? = nil, dragDistance: Double = 120, verticalZoom: Bool = false,
             zoomSpeed: Double = 1, discardFirstReport: Bool = false,
-            dragScroll: Bool = false, scrollSpeed: Double = 1
+            dragScroll: Bool = false, scrollSpeed: Double = 1,
+            doubleClickInterval: TimeInterval? = nil
         ) {
             self.holdDelay = holdDelay
+            self.doubleClickInterval = doubleClickInterval
             self.dragDistance = dragDistance
             self.verticalZoom = verticalZoom
             self.zoomSpeed = zoomSpeed
@@ -62,6 +65,8 @@ public struct ButtonGesture {
     private var state = State.idle
     private var options = Options()
     private var deadline: TimeInterval?
+    private var clickDeadline: TimeInterval?
+    private var pressedAt: TimeInterval = 0
     private var discardFirst = false
     private var x = 0.0
     private var y = 0.0
@@ -71,16 +76,24 @@ public struct ButtonGesture {
     public init() {}
 
     public var isPressed: Bool { state != .idle }
+    public var isActive: Bool { isPressed || clickDeadline != nil }
+    public var nextDeadline: TimeInterval? { state == .pending ? deadline : clickDeadline }
 
-    public mutating func down(at time: TimeInterval, options: Options) {
-        guard state == .idle else { return }
+    @discardableResult
+    public mutating func down(at time: TimeInterval, options: Options) -> [Event] {
+        guard state == .idle else { return [] }
         precondition(options.dragDistance.isFinite && options.dragDistance > 0)
+        let events = advance(to: time)
+        let pendingClick = clickDeadline
         self = ButtonGesture()
+        clickDeadline = pendingClick
+        pressedAt = time
         state = .pending
         self.options = options
         self.options.scrollSpeed = options.scrollSpeed.isFinite ? max(0.25, min(3, options.scrollSpeed)) : 1
         deadline = options.holdDelay.map { time + $0 }
         discardFirst = options.discardFirstReport
+        return events
     }
 
     public mutating func move(dx: Int16, dy: Int16) -> [Event] {
@@ -90,7 +103,9 @@ public struct ButtonGesture {
             return []
         }
         let pointer: [Event] = options.dragScroll && (dx != 0 || dy != 0) ? [.pointer(dx: dx, dy: dy)] : []
-        return pointer + movement(dx: dx, dy: dy)
+        let events = movement(dx: dx, dy: dy)
+        let click = events.isEmpty ? [] : finishClick()
+        return click + pointer + events
     }
 
     private mutating func movement(dx: Int16, dy: Int16) -> [Event] {
@@ -114,21 +129,36 @@ public struct ButtonGesture {
         return [.action(y < 0 ? .up : .down)]
     }
 
-    public mutating func advance(to time: TimeInterval) -> Event? {
-        guard state == .pending, let deadline, time >= deadline else { return nil }
-        state = .done
-        return .action(.hold)
+    public mutating func advance(to time: TimeInterval) -> [Event] {
+        var events: [Event] = []
+        if state == .idle, let clickDeadline, time >= clickDeadline { events = finishClick() }
+        if state == .pending, let deadline, time >= deadline {
+            events += finishClick() + [.action(.hold)]
+            state = .done
+        }
+        return events
     }
 
     public mutating func up(at time: TimeInterval) -> [Event] {
-        defer { self = ButtonGesture() }
+        defer {
+            state = .idle
+            deadline = nil
+        }
         switch state {
         case .idle, .done: return []
         case .zooming: return [.zoom(.end)]
         case .scrolling: return [.scroll(.end)]
         case .pending:
             // A late hold timer must not turn a long press into a click.
-            if let deadline, time >= deadline { return [.action(.hold)] }
+            if let deadline, time >= deadline { return finishClick() + [.action(.hold)] }
+            if clickDeadline != nil {
+                clickDeadline = nil
+                return [.action(.doubleClick)]
+            }
+            if let interval = options.doubleClickInterval, time < pressedAt + interval {
+                clickDeadline = pressedAt + interval
+                return []
+            }
             return [.action(.click)]
         }
     }
@@ -137,6 +167,12 @@ public struct ButtonGesture {
         defer { self = ButtonGesture() }
         if state == .scrolling { return [.scroll(.cancel)] }
         return state == .zooming ? [.zoom(.cancel)] : []
+    }
+
+    private mutating func finishClick() -> [Event] {
+        guard clickDeadline != nil else { return [] }
+        clickDeadline = nil
+        return [.action(.click)]
     }
 
     private mutating func scroll(_ dx: Double, _ dy: Double) -> [Event] {

@@ -214,12 +214,12 @@ private struct ClickableButtonForm: View {
         }
         Group {
             Section {
-                ForEach([ButtonSlot.click, .hold], id: \.self, content: row)
+                ForEach([ButtonSlot.click, .doubleClick, .hold], id: \.self, content: row)
             } header: {
                 Text("Press")
             } footer: {
                 Text(
-                    "Click fires on release. Hold fires once after the hold delay, and then the click doesn’t."
+                    "Double click follows macOS’s double-click speed. When set, a single click waits for a second press. Holding fires once without clicking."
                 )
                 .inspectorFootnote()
             }
@@ -244,6 +244,7 @@ private struct ClickableButtonForm: View {
     private func title(_ slot: ButtonSlot) -> String {
         switch slot {
         case .click: return "Click"
+        case .doubleClick: return "Double click"
         case .hold: return "Hold"
         case .up: return "Drag up"
         case .down: return "Drag down"

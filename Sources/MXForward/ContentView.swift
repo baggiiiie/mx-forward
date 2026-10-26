@@ -290,9 +290,7 @@ final class TimingPadView: NSView {
         onResult("Pressed…")
         let next = Timer(timeInterval: delay / 1000, repeats: false) { [weak self] _ in
             guard let self else { return }
-            if let event = self.gesture.advance(to: ProcessInfo.processInfo.systemUptime) {
-                self.show([event])
-            }
+            self.show(self.gesture.advance(to: ProcessInfo.processInfo.systemUptime))
         }
         timer = next
         RunLoop.main.add(next, forMode: .common)

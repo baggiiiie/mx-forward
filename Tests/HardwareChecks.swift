@@ -246,6 +246,36 @@ private enum HardwareChecks {
                 "PASS: recording suppresses mouse actions; edits cancel held releases; thumb click and drag stay independent"
             )
 
+            model.preferences.buttons.forward.doubleClick = ButtonAction(.missionControl)
+            model.preferences.buttons.back.doubleClick = ButtonAction(.appExpose)
+            func click(_ control: MouseControl) {
+                inputMouse.onPress(control, true)
+                inputMouse.onPress(control, false)
+            }
+            click(.forward)
+            click(.back)
+            click(.forward)
+            try require(
+                model.lastAction.contains("Forward double click → Mission Control"),
+                "Interleaved buttons confused their double-click actions")
+            click(.back)
+            try require(
+                model.lastAction.contains("Back double click → App Exposé"),
+                "Back did not recognize its own double click")
+            click(.forward)
+            try require(model.lastAction.contains("pressed…"), "Single click fired before its deadline")
+            try await Task.sleep(for: .seconds(NSEvent.doubleClickInterval + 0.05))
+            try require(model.lastAction.contains("Forward click →"), "Delayed single click never fired")
+            click(.forward)
+            model.setRecordingShortcut(true)
+            let cancelledAction = model.lastAction
+            try await Task.sleep(for: .seconds(NSEvent.doubleClickInterval + 0.05))
+            try require(model.lastAction == cancelledAction, "Recording left a delayed click running")
+            model.setRecordingShortcut(false)
+            model.preferences.buttons.forward.doubleClick = ButtonAction(.none)
+            model.preferences.buttons.back.doubleClick = ButtonAction(.none)
+            print("PASS: per-button double clicks, delayed singles, and recording cancellation reach the engine")
+
             model.preferences.wheelMode = .freeSpin
             try await waitFor {
                 model.enabled && !model.busy

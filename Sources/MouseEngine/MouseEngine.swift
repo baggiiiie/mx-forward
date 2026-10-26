@@ -29,10 +29,10 @@ package final class MouseEngine: ObservableObject {
     private var wheel = WheelInterpreter()
     private var horizontalWheel = ThumbWheelInterpreter()
     private var horizontalNatural = true
-    /// Gestures for buttons that are currently held.
+    // Includes clicks waiting for a second press.
     private var gestures: [MouseControl: ButtonGesture] = [:]
-    private var holdTasks: [MouseControl: Task<Void, Never>] = [:]
-    private var actionAnchors: [MouseControl: CGPoint] = [:]
+    private var gestureTasks: [MouseControl: Task<Void, Never>] = [:]
+    private var actionAnchors: [MouseControl: (press: CGPoint, click: CGPoint?)] = [:]
     private var dragPointer: PointerOutput?
     private let startsHardware: Bool
     private let persistsSettings: Bool
@@ -75,9 +75,14 @@ package final class MouseEngine: ObservableObject {
         mouse.onPress = { [weak self] control, down in self?.physicalPress(control, down: down) }
         mouse.onMovement = { [weak self] dx, dy in
             guard let self, self.enabled, !self.recordingShortcut,
-                let control = self.gestures.keys.first(where: self.reportsMovement)
+                let control = self.gestures.keys.first(where: {
+                    self.gestures[$0]?.isPressed == true && self.reportsMovement($0)
+                })
             else { return }
-            self.perform(self.gestures[control]?.move(dx: dx, dy: dy) ?? [], from: control)
+            let deadline = self.gestures[control]?.nextDeadline
+            let events = self.gestures[control]?.move(dx: dx, dy: dy) ?? []
+            self.perform(events, from: control)
+            if self.gestures[control]?.nextDeadline != deadline { self.updateGestureTimer(for: control) }
         }
         mouse.onScroll = { [weak self] scroll, multiplier in
             guard let self, self.enabled, self.preferences.wheelEnabled else { return }
@@ -465,8 +470,8 @@ package final class MouseEngine: ObservableObject {
         gestures.removeAll()
         actionAnchors.removeAll()
         dragPointer = nil
-        for task in holdTasks.values { task.cancel() }
-        holdTasks.removeAll()
+        for task in gestureTasks.values { task.cancel() }
+        gestureTasks.removeAll()
         wheel.cancel()
         horizontalWheel.cancel()
     }
@@ -488,24 +493,29 @@ package final class MouseEngine: ObservableObject {
             return
         }
         // Every button report repeats the state of all held buttons.
-        guard down != (gestures[control] != nil) else { return }
+        guard down != (gestures[control]?.isPressed ?? false) else { return }
         let now = ProcessInfo.processInfo.systemUptime
         guard down else {
-            holdTasks.removeValue(forKey: control)?.cancel()
             let events = gestures[control]?.up(at: now) ?? []
-            gestures[control] = nil
+            if gestures[control]?.isActive == true, let anchor = actionAnchors[control] {
+                actionAnchors[control] = (anchor.press, anchor.press)
+            }
             perform(events, from: control)
-            actionAnchors[control] = nil
+            updateGestureTimer(for: control)
             if preferences.buttons[control].dragScroll { dragPointer = nil }
             return
         }
         // Movement reports don't say which button is held, so two dragging buttons can't share them.
-        if reportsMovement(control), let other = gestures.keys.first(where: reportsMovement) {
-            holdTasks.removeValue(forKey: other)?.cancel()
-            let events = gestures[other]?.cancel() ?? []
-            gestures[other] = nil
-            perform(events, from: other)
-            actionAnchors[other] = nil
+        if reportsMovement(control), let other = gestures.keys.first(where: {
+            gestures[$0]?.isPressed == true && reportsMovement($0)
+        }) {
+            for button in [control, other] {
+                gestureTasks.removeValue(forKey: button)?.cancel()
+                let events = gestures[button]?.cancel() ?? []
+                gestures[button] = nil
+                perform(events, from: button)
+                actionAnchors[button] = nil
+            }
             dragPointer = nil
             suppressedControls.formUnion([control, other])
             append("Cancelled: \(other.name) and \(control.name) were held together")
@@ -516,22 +526,35 @@ package final class MouseEngine: ObservableObject {
             holdDelay: mapping.hold.isNone ? nil : mapping.holdMilliseconds / 1000,
             dragDistance: 120 / mapping.dragSensitivity, verticalZoom: mapping.verticalZoom,
             zoomSpeed: mapping.zoomSpeed, discardFirstReport: mouse.connection?.discardFirstMovement ?? false,
-            dragScroll: mapping.dragScroll, scrollSpeed: mapping.dragSensitivity)
-        var gesture = ButtonGesture()
-        gesture.down(at: now, options: options)
+            dragScroll: mapping.dragScroll, scrollSpeed: mapping.dragSensitivity,
+            doubleClickInterval: mapping.doubleClick.isNone ? nil : NSEvent.doubleClickInterval)
+        var gesture = gestures[control] ?? ButtonGesture()
+        let events = gesture.down(at: now, options: options)
         gestures[control] = gesture
+        perform(events, from: control)
         let anchor = CGEvent(source: nil)?.location ?? .zero
-        actionAnchors[control] = anchor
+        actionAnchors[control] = (anchor, actionAnchors[control]?.click)
         if mapping.dragScroll { dragPointer = PointerOutput(at: anchor) }
         lastAction = "\(control.name) pressed…"
-        if let delay = options.holdDelay {
-            holdTasks[control] = Task { [weak self] in
-                do { try await Task.sleep(for: .seconds(delay)) } catch { return }
-                guard let self, self.enabled,
-                    let event = self.gestures[control]?.advance(to: ProcessInfo.processInfo.systemUptime)
-                else { return }
-                self.perform([event], from: control)
-            }
+        updateGestureTimer(for: control)
+    }
+
+    private func updateGestureTimer(for control: MouseControl) {
+        gestureTasks.removeValue(forKey: control)?.cancel()
+        guard let gesture = gestures[control], gesture.isActive else {
+            gestures[control] = nil
+            actionAnchors[control] = nil
+            return
+        }
+        guard let deadline = gesture.nextDeadline else { return }
+        let delay = max(0, deadline - ProcessInfo.processInfo.systemUptime)
+        gestureTasks[control] = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            guard !Task.isCancelled, let self, self.enabled else { return }
+            self.gestureTasks[control] = nil
+            let events = self.gestures[control]?.advance(to: ProcessInfo.processInfo.systemUptime) ?? []
+            self.perform(events, from: control)
+            self.updateGestureTimer(for: control)
         }
     }
 
@@ -557,10 +580,14 @@ package final class MouseEngine: ObservableObject {
 
     private func perform(_ slot: ButtonSlot, of control: MouseControl, testMode: Bool) {
         let action = preferences.buttons[control][slot]
-        lastAction = (testMode ? "Test: " : "") + "\(control.name) \(slot.rawValue) → \(action.label)"
+        let anchor = actionAnchors[control]
+        let location = (slot == .click ? anchor?.click : nil) ?? anchor?.press ?? .zero
+        if slot == .click { actionAnchors[control]?.click = nil }
+        let name = slot == .doubleClick ? "double click" : slot.rawValue
+        lastAction = (testMode ? "Test: " : "") + "\(control.name) \(name) → \(action.label)"
         append(lastAction)
         guard !testMode, !action.isNone else { return }
-        if !ActionOutput.send(action, at: actionAnchors[control] ?? .zero) {
+        if !ActionOutput.send(action, at: location) {
             status =
                 action.kind == .script
                 ? "Script could not be started. Check its path, executable permission, and #! interpreter."
@@ -578,7 +605,7 @@ package final class MouseEngine: ObservableObject {
         case .end, .cancel: append(zoom == .end ? "Zoom ended" : "Zoom cancelled")
         case .click: break
         }
-        if !testMode && !ZoomOutput.send(zoom, at: actionAnchors[control] ?? .zero) {
+        if !testMode && !ZoomOutput.send(zoom, at: actionAnchors[control]?.press ?? .zero) {
             status = "Zoom could not be sent. Check Accessibility."
         }
     }

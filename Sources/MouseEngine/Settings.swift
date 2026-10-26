@@ -78,7 +78,7 @@ package struct ButtonAction: Codable, Equatable {
         }
         package static func choices(for slot: ButtonSlot) -> [Kind] {
             switch slot {
-            case .click, .hold: return allCases.filter { $0 != .zoom && $0 != .scroll }
+            case .click, .doubleClick, .hold: return allCases.filter { $0 != .zoom && $0 != .scroll }
             case .left, .right: return allCases.filter { $0 != .zoom }
             case .up, .down: return allCases
             }
@@ -125,6 +125,11 @@ package struct ButtonMapping: Codable, Equatable {
     package init() {}
     package var enabled = true
     package var click = ButtonAction(.none)
+    private var doubleClickAction: ButtonAction?
+    package var doubleClick: ButtonAction {
+        get { doubleClickAction ?? ButtonAction(.none) }
+        set { doubleClickAction = newValue.isNone ? nil : newValue }
+    }
     package var hold = ButtonAction(.none)
     package var up = ButtonAction(.none)
     package var down = ButtonAction(.none)
@@ -134,10 +139,16 @@ package struct ButtonMapping: Codable, Equatable {
     package var dragSensitivity = 1.0
     package var zoomSpeed = 2.0
 
+    private enum CodingKeys: String, CodingKey {
+        case enabled, click, hold, up, down, left, right, holdMilliseconds, dragSensitivity, zoomSpeed
+        case doubleClickAction = "doubleClick"
+    }
+
     package subscript(_ slot: ButtonSlot) -> ButtonAction {
         get {
             switch slot {
             case .click: return click
+            case .doubleClick: return doubleClick
             case .hold: return hold
             case .up: return up
             case .down: return down
@@ -148,6 +159,7 @@ package struct ButtonMapping: Codable, Equatable {
         set {
             switch slot {
             case .click: click = newValue
+            case .doubleClick: doubleClick = newValue
             case .hold: hold = newValue
             case .up: up = newValue
             case .down: down = newValue

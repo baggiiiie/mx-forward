@@ -38,6 +38,9 @@ enum RunChecks {
         reporting.testClaimAndReleasePreserveFullRemapTarget()
         let gesture = ButtonGestureTests()
         gesture.testClickJitterAndIdle()
+        gesture.testDoubleClickSuppressesSinglesAndStartsANewPair()
+        gesture.testDoubleClickDeadlineUsesPressTimeAndFlushesALateTimer()
+        gesture.testDoubleClickKeepsHoldDragAndCancellationSeparate()
         gesture.testWithoutHoldALongPressStillClicks()
         gesture.testHoldFiresOnceWithoutAClick()
         gesture.testShortPressWithHoldEnabledClicks()
@@ -88,7 +91,7 @@ enum RunChecks {
             exit(1)
         }
         print(
-            "PASS: 56 scenarios (click, hold, and drag gestures, zoom, wheel, HID++ reporting, native macOS events)"
+            "PASS: 59 scenarios (click, double click, hold, and drag gestures, zoom, wheel, HID++ reporting, native macOS events)"
         )
     }
 }

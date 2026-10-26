@@ -28,17 +28,75 @@ final class ButtonGestureTests {
         expectEqual(gesture.up(at: 0.2), [])
     }
 
+    func testDoubleClickSuppressesSinglesAndStartsANewPair() {
+        let options = ButtonGesture.Options(doubleClickInterval: 0.5)
+        var gesture = pressed(options)
+        expectEqual(gesture.up(at: 0.1), [])
+        expectEqual(gesture.isPressed, false)
+        expectEqual(gesture.nextDeadline, 0.5)
+        expectEqual(gesture.advance(to: 0.49), [])
+        expectEqual(gesture.down(at: 0.49, options: options), [])
+        expectNil(gesture.nextDeadline)
+        expectEqual(gesture.advance(to: 0.7), [])
+        expectEqual(gesture.up(at: 0.8), [.action(.doubleClick)])
+        expectEqual(gesture.isActive, false)
+        gesture.down(at: 0.9, options: options)
+        expectEqual(gesture.up(at: 1), [])
+        expectEqual(gesture.advance(to: 1.4), [.action(.click)])
+        expectEqual(gesture.advance(to: 2), [])
+        expectEqual(gesture.isActive, false)
+    }
+
+    func testDoubleClickDeadlineUsesPressTimeAndFlushesALateTimer() {
+        let options = ButtonGesture.Options(doubleClickInterval: 0.5)
+        var gesture = pressed(options)
+        expectEqual(gesture.up(at: 0.4), [])
+        expectEqual(gesture.down(at: 0.5, options: options), [.action(.click)])
+        expectEqual(gesture.up(at: 0.6), [])
+        expectEqual(gesture.advance(to: 1), [.action(.click)])
+        gesture.down(at: 2, options: options)
+        expectEqual(gesture.up(at: 3), [.action(.click)])
+        expectEqual(gesture.isActive, false)
+        for interval in [0.2, 0.8] {
+            var timed = pressed(.init(doubleClickInterval: interval))
+            expectEqual(timed.up(at: 0.05), [])
+            expectEqual(timed.advance(to: interval - 0.01), [])
+            expectEqual(timed.advance(to: interval), [.action(.click)])
+        }
+    }
+
+    func testDoubleClickKeepsHoldDragAndCancellationSeparate() {
+        let options = ButtonGesture.Options(holdDelay: 0.4, doubleClickInterval: 0.5)
+        var gesture = pressed(options)
+        _ = gesture.up(at: 0.1)
+        gesture.down(at: 0.2, options: options)
+        expectEqual(gesture.advance(to: 0.7), [.action(.click), .action(.hold)])
+        expectEqual(gesture.up(at: 0.8), [])
+        gesture.down(at: 1, options: options)
+        _ = gesture.up(at: 1.1)
+        gesture.down(at: 1.2, options: options)
+        expectEqual(gesture.move(dx: 130, dy: 0), [.action(.click), .action(.right)])
+        expectEqual(gesture.up(at: 1.3), [])
+        gesture.down(at: 2, options: options)
+        _ = gesture.up(at: 2.1)
+        expectEqual(gesture.cancel(), [])
+        expectEqual(gesture.advance(to: 3), [])
+        expectEqual(gesture.isActive, false)
+        gesture.down(at: 4, options: options)
+        expectEqual(gesture.up(at: 4.5), [.action(.hold)])
+    }
+
     func testWithoutHoldALongPressStillClicks() {
         var gesture = pressed()
-        expectNil(gesture.advance(to: 10))
+        expectEqual(gesture.advance(to: 10), [])
         expectEqual(gesture.up(at: 10), [.action(.click)])
     }
 
     func testHoldFiresOnceWithoutAClick() {
         var gesture = pressed(.init(holdDelay: 0.4), at: 1)
-        expectNil(gesture.advance(to: 1.39))
-        expectEqual(gesture.advance(to: 1.4), .action(.hold))
-        expectNil(gesture.advance(to: 2))
+        expectEqual(gesture.advance(to: 1.39), [])
+        expectEqual(gesture.advance(to: 1.4), [.action(.hold)])
+        expectEqual(gesture.advance(to: 2), [])
         expectEqual(gesture.move(dx: 0, dy: -500), [])
         expectEqual(gesture.up(at: 2), [])
     }
@@ -79,7 +137,7 @@ final class ButtonGestureTests {
     func testDragBeforeHoldCancelsTheHold() {
         var gesture = pressed(.init(holdDelay: 0.4))
         expectEqual(gesture.move(dx: -130, dy: 0), [.action(.left)])
-        expectNil(gesture.advance(to: 1))
+        expectEqual(gesture.advance(to: 1), [])
         expectEqual(gesture.up(at: 1), [])
     }
 
@@ -99,7 +157,7 @@ final class ButtonGestureTests {
     func testCancelSuppressesActions() {
         var gesture = pressed(.init(holdDelay: 0.4))
         expectEqual(gesture.cancel(), [])
-        expectNil(gesture.advance(to: 1))
+        expectEqual(gesture.advance(to: 1), [])
         expectEqual(gesture.up(at: 1), [])
     }
 
@@ -133,7 +191,7 @@ final class ButtonGestureTests {
         expectEqual(
             gesture.move(dx: 16, dy: -17),
             [.pointer(dx: 16, dy: -17), .scroll(.begin), .scroll(.move(x: 20, y: -20))])
-        expectNil(gesture.advance(to: 1))
+        expectEqual(gesture.advance(to: 1), [])
         expectEqual(gesture.move(dx: -5, dy: 10), [.pointer(dx: -5, dy: 10), .scroll(.move(x: -5, y: 10))])
         expectEqual(gesture.up(at: 1), [.scroll(.end)])
         expectEqual(gesture.move(dx: 100, dy: 100), [])
@@ -183,7 +241,7 @@ final class ButtonGestureTests {
 
     func testDragScrollPointerContinuesAfterHold() {
         var gesture = pressed(.init(holdDelay: 0.4, dragScroll: true))
-        expectEqual(gesture.advance(to: 1), .action(.hold))
+        expectEqual(gesture.advance(to: 1), [.action(.hold)])
         expectEqual(gesture.move(dx: 100, dy: 50), [.pointer(dx: 100, dy: 50)])
         expectEqual(gesture.move(dx: 0, dy: 0), [])
         expectEqual(gesture.up(at: 1), [])

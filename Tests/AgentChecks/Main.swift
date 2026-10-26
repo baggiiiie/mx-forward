@@ -14,6 +14,7 @@ enum AgentChecks {
                 try checkDragScrollPointer()
                 try checkEventMemory()
                 try checkCodecAndLock()
+                try checkDoubleClickSettings()
                 try await checkScripts()
                 try await checkConnectionLifecycle()
                 try await checkPreferencesStore()
@@ -194,6 +195,36 @@ enum AgentChecks {
             !ActionOutput.send(ButtonAction(.script, scriptPath: "/missing/script"), at: .zero),
             "A missing script was accepted")
         print("PASS: script actions persist for every button/slot, run asynchronously, and suppress overlap")
+    }
+
+    private static func checkDoubleClickSettings() throws {
+        let original = Preferences()
+        let restored = try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(original))
+        try require(restored == original, "Preferences without double clicks did not migrate")
+        var edited = original
+        for control in MouseControl.allCases {
+            edited.buttons[control].doubleClick = ButtonAction(.missionControl)
+        }
+        let saved = try JSONDecoder().decode(Preferences.self, from: JSONEncoder().encode(edited))
+        try require(saved == edited, "Double clicks did not survive saving")
+        try require(
+            try ConfigJSON.apply(ConfigJSON.encode(edited), to: original) == edited,
+            "Double clicks did not survive config JSON")
+        var current = original
+        current.buttons.forward.holdMilliseconds = 750
+        let merged = current.applyingEdits(from: original, to: edited)
+        try require(
+            merged.buttons.forward.holdMilliseconds == 750
+                && MouseControl.allCases.allSatisfy { merged.buttons[$0].doubleClick.kind == .missionControl },
+            "Double-click edits overwrote concurrent settings")
+        let cleared = try ConfigJSON.apply(
+            #"{"buttons":{"forward":{"doubleClick":"default"},"back":{"doubleClick":"none"}}}"#,
+            to: edited)
+        try require(
+            cleared.buttons.forward.doubleClick.isNone && cleared.buttons.back.doubleClick.isNone
+                && cleared.buttons.thumb.doubleClick.kind == .missionControl,
+            "Clearing a double click changed unrelated actions")
+        print("PASS: double clicks migrate, persist, merge, and clear independently for every button")
     }
 
     private static func checkConnectionLifecycle() async throws {
