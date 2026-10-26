@@ -27,7 +27,7 @@ for path, identifier, name, executable, agent in [
                 CFBundleExecutable=executable, CFBundlePackageType='APPL',
                 CFBundleShortVersionString='0.7.2', CFBundleVersion='13',
                 LSMinimumSystemVersion='14.0', NSHighResolutionCapable=True,
-                NSInputMonitoringUsageDescription='Read Logitech Bolt mouse buttons and held movement for mappings.')
+                NSInputMonitoringUsageDescription='Read Logitech mouse buttons and movement over Bluetooth or Bolt.')
     if agent: info['LSUIElement'] = True
     with open(pathlib.Path(path) / 'Contents/Info.plist', 'wb') as f: plistlib.dump(info, f)
 PY

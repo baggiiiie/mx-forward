@@ -25,6 +25,7 @@ enum RunChecks {
         packet.testSignedRawMovementAndShortReports()
         packet.testShortFeatureDiscoveryPacket()
         packet.testLongForwardClaimOnlyUpdatesItsReportingFlags()
+        packet.testBluetoothUsesLongReportsAndDirectAddress()
         packet.testTruncatedAndUnknownReportsRejected()
         packet.testBothErrorFormatsMatchOriginalRequest()
         packet.testSimultaneousControlsAndRelease()
@@ -91,7 +92,7 @@ enum RunChecks {
             exit(1)
         }
         print(
-            "PASS: 59 scenarios (click, double click, hold, and drag gestures, zoom, wheel, HID++ reporting, native macOS events)"
+            "PASS: 60 scenarios (click, double click, hold, and drag gestures, zoom, wheel, HID++ reporting, native macOS events)"
         )
     }
 }

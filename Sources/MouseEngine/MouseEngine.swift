@@ -25,7 +25,7 @@ package final class MouseEngine: ObservableObject {
     private let configURL: URL?
     private var configModified: Date?
     private var configTask: Task<Void, Never>?
-    private let mouse: BoltMouse
+    private let mouse: LogitechMouse
     private var wheel = WheelInterpreter()
     private var horizontalWheel = ThumbWheelInterpreter()
     private var horizontalNatural = true
@@ -55,11 +55,11 @@ package final class MouseEngine: ObservableObject {
     private var wakeObservers: [NSObjectProtocol] = []
 
     package init(
-        mouse device: BoltMouse? = nil, configURL: URL? = nil,
+        mouse device: LogitechMouse? = nil, configURL: URL? = nil,
         initialPreferences: Preferences? = nil, startsHardware: Bool = true,
         persistsSettings: Bool = true, preferenceStore: UserDefaults = .standard
     ) {
-        self.mouse = device ?? BoltMouse()
+        self.mouse = device ?? LogitechMouse()
         self.configURL = configURL
         self.startsHardware = startsHardware
         self.persistsSettings = persistsSettings

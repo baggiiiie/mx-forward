@@ -30,7 +30,7 @@ enum MXForwardAgent {
                 throw IPCError("Could not open the mouse preferences")
             }
             let engine = MouseEngine(
-                mouse: BoltMouse(
+                mouse: LogitechMouse(
                     recoveryURL: offline
                         ? nil
                         : ConfigJSON.defaultURL

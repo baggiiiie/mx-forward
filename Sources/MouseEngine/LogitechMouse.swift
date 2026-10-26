@@ -5,21 +5,25 @@ import IOKit.hid
 enum MouseError: LocalizedError {
     case message(String)
     case timeout
+    case hidpp1(UInt8)
+    case hidpp2(UInt8)
     var errorDescription: String? {
         switch self {
         case .message(let text): return text
         case .timeout: return "Mouse response timed out"
+        case .hidpp1(let code), .hidpp2(let code):
+            return String(format: "HID++ error 0x%02X", code)
         }
     }
 }
 
-/// Talks to the Bolt receiver on the main run loop.
 @MainActor
-package final class BoltMouse {
+package final class LogitechMouse {
     struct Connection: Equatable {
         let endpoint: UInt
         let slot: UInt8
         let feature: UInt8
+        let unitID: UInt32
         let discardFirstMovement: Bool
         let availableControls: Set<MouseControl>
         /// Buttons that can report movement while held.
@@ -92,21 +96,24 @@ package final class BoltMouse {
         }
         let value = IOHIDManagerCreate(kCFAllocatorDefault, 0)
         manager = value
-        IOHIDManagerSetDeviceMatching(
+        IOHIDManagerSetDeviceMatchingMultiple(
             value,
             [
-                kIOHIDVendorIDKey: 0x046D,
-                kIOHIDProductIDKey: 0xC548,
-                kIOHIDPrimaryUsagePageKey: 0xFF00,
-                kIOHIDPrimaryUsageKey: 1,
-            ] as CFDictionary)
+                [
+                    kIOHIDVendorIDKey: 0x046D,
+                    kIOHIDProductIDKey: 0xC548,
+                    kIOHIDPrimaryUsagePageKey: 0xFF00,
+                    kIOHIDPrimaryUsageKey: 1,
+                ],
+                [kIOHIDVendorIDKey: 0x046D, kIOHIDProductIDKey: 0xB034],
+            ] as CFArray)
         let context = Unmanaged.passUnretained(self).toOpaque()
         IOHIDManagerRegisterDeviceMatchingCallback(
             value,
             { context, _, _, device in
                 guard let context else { return }
                 MainActor.assumeIsolated {
-                    Unmanaged<BoltMouse>.fromOpaque(context).takeUnretainedValue().matched(device)
+                    Unmanaged<LogitechMouse>.fromOpaque(context).takeUnretainedValue().matched(device)
                 }
             }, context)
         IOHIDManagerRegisterDeviceRemovalCallback(
@@ -114,7 +121,7 @@ package final class BoltMouse {
             { context, _, _, device in
                 guard let context else { return }
                 MainActor.assumeIsolated {
-                    Unmanaged<BoltMouse>.fromOpaque(context).takeUnretainedValue().removed(device)
+                    Unmanaged<LogitechMouse>.fromOpaque(context).takeUnretainedValue().removed(device)
                 }
             }, context)
         IOHIDManagerRegisterInputReportCallback(
@@ -122,9 +129,9 @@ package final class BoltMouse {
             { context, _, sender, _, reportID, bytes, length in
                 guard let context, let sender, reportID == 0x10 || reportID == 0x11 else { return }
                 var data = Array(UnsafeBufferPointer(start: bytes, count: length))
-                if data.first != UInt8(reportID) { data.insert(UInt8(reportID), at: 0) }
+                if length == (reportID == 0x10 ? 6 : 19) { data.insert(UInt8(reportID), at: 0) }
                 MainActor.assumeIsolated {
-                    Unmanaged<BoltMouse>.fromOpaque(context).takeUnretainedValue()
+                    Unmanaged<LogitechMouse>.fromOpaque(context).takeUnretainedValue()
                         .received(data, endpoint: UInt(bitPattern: sender))
                 }
             }, context)
@@ -137,7 +144,7 @@ package final class BoltMouse {
             throw MouseError.message(
                 String(
                     format:
-                        "Cannot open Bolt receiver (0x%08X). Check Input Monitoring, then restart MX Forward.",
+                        "Cannot open Logitech mouse devices (0x%08X). Check Input Monitoring, then restart MX Forward.",
                     result))
         }
         onStatus("Looking for your MX Master 3S…")
@@ -170,18 +177,33 @@ package final class BoltMouse {
     private func matched(_ device: IOHIDDevice) {
         let id = key(device)
         guard devices[id] == nil else { return }
+        let bluetooth = isBluetooth(device)
+        if bluetooth {
+            let elements = IOHIDDeviceCopyMatchingElements(
+                device, [kIOHIDElementTypeKey: kIOHIDElementTypeOutput.rawValue] as CFDictionary, 0)
+                as? [IOHIDElement] ?? []
+            guard elements.contains(where: { IOHIDElementGetReportID($0) == 0x11 }) else { return }
+        }
         let result = IOHIDDeviceOpen(device, 0)
         guard result == kIOReturnSuccess else {
-            onStatus(String(format: "Bolt receiver unavailable (0x%08X). Check Input Monitoring.", result))
+            onStatus(
+                String(format: "Logitech mouse device unavailable (0x%08X). Check Input Monitoring.", result))
             return
         }
         devices[id] = device
-        onLog("Bolt receiver connected")
+        onLog(bluetooth ? "Bluetooth mouse connected" : "Bolt receiver connected")
         beginProbe(id)
     }
 
+    private func isBluetooth(_ device: IOHIDDevice) -> Bool {
+        let transport = IOHIDDeviceGetProperty(device, kIOHIDTransportKey as CFString) as? String ?? ""
+        return transport.hasPrefix("Bluetooth")
+    }
+
     private func beginProbe(_ id: UInt) {
-        guard discoveryEnabled else { return }
+        guard discoveryEnabled, let device = devices[id] else { return }
+        let bluetooth = isBluetooth(device)
+        let slots: ClosedRange<UInt8> = bluetooth ? 0xFF...0xFF : 1...6
         let generation = UUID()
         probeGenerations[id] = generation
         probes[id] = Task { [weak self] in
@@ -192,8 +214,9 @@ package final class BoltMouse {
                     self.probeGenerations[id] = nil
                 }
             }
-            for slot in UInt8(1)...6 {
+            for slot in slots {
                 guard !Task.isCancelled, self.connection == nil, self.devices[id] != nil else { return }
+                let transport = bluetooth ? "Bluetooth" : "Bolt slot \(slot)"
                 do {
                     let ping = try await self.request(id, slot, 0, 1, [0, 0, 0xA7])
                     guard ping.payload.count >= 3, ping.payload[0] >= 2, ping.payload[2] == 0xA7 else {
@@ -209,6 +232,12 @@ package final class BoltMouse {
                     }
                     let name = String(decoding: bytes, as: UTF8.self)
                     guard name.localizedCaseInsensitiveContains("MX Master 3S") else { continue }
+                    let information = try await self.feature(0x0003, id, slot)
+                    let identity = try await self.request(id, slot, information, 0)
+                    guard identity.payload.count >= 5 else {
+                        throw MouseError.message("Incomplete mouse identity response")
+                    }
+                    let unitID = identity.payload[1...4].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
                     let special = try await self.request(id, slot, 0, 0, [0x1B, 0x04])
                     let index = special.payload[0]
                     guard index != 0 else { throw MouseError.message("Missing button control feature") }
@@ -231,7 +260,7 @@ package final class BoltMouse {
                     }
                     guard self.connection == nil else { return }
                     self.connection = Connection(
-                        endpoint: id, slot: slot, feature: index,
+                        endpoint: id, slot: slot, feature: index, unitID: unitID,
                         discardFirstMovement: special.payload[2] >= 5, availableControls: availableControls,
                         movementControls: movementControls)
                     do { try await self.recoverInterruptedSession() } catch {
@@ -240,7 +269,8 @@ package final class BoltMouse {
                         )
                         return
                     }
-                    self.onStatus("\(name) connected · Bolt slot \(slot)")
+                    self.onStatus("\(name) connected · \(transport)")
+                    self.onLog("\(name) connected · \(transport)")
                     self.onLog(
                         "Available buttons: \(availableControls.sorted().map(\.name).joined(separator: ", "))"
                     )
@@ -250,7 +280,7 @@ package final class BoltMouse {
                     return
                 } catch {
                     guard !Task.isCancelled else { return }
-                    self.onLog("Slot \(slot): \(error.localizedDescription)")
+                    self.onLog("\(transport): \(error.localizedDescription)")
                 }
             }
             if self.connection == nil {
@@ -316,7 +346,10 @@ package final class BoltMouse {
             }
         } catch {
             // Cleanup must still run when the caller was cancelled.
-            try? await Task { try await self.release() }.value
+            try? await Task {
+                try await self.release()
+                await self.disconnectIfUnavailable(c)
+            }.value
             throw error
         }
     }
@@ -347,7 +380,10 @@ package final class BoltMouse {
         }
         try saveRecovery(c)
         if !claimed { recoveryPending = false }
-        if let failure { throw failure }
+        if let failure {
+            await disconnectIfUnavailable(c)
+            if connection == c { throw failure }
+        }
     }
 
     /// Sleep cleanup cannot wait for a reply on the main run loop.
@@ -424,18 +460,32 @@ package final class BoltMouse {
         let failures = pending.values.filter { $0.endpoint == id }
         for p in failures {
             pending.removeValue(forKey: p.id)
-            p.continuation.resume(throwing: MouseError.message("Receiver disconnected"))
+            p.continuation.resume(throwing: MouseError.message("Mouse device disconnected"))
         }
-        if connection?.endpoint == id {
-            connection = nil
-            claims.removeAll()
-            movementClaims.removeAll()
-            wheelClaim = nil
-            horizontalClaim = nil
-            onDisconnect()
-            onStatus("Bolt receiver disconnected")
-        }
+        if connection?.endpoint == id { disconnect() }
         IOHIDDeviceClose(device, 0)
+    }
+
+    private func disconnect() {
+        connection = nil
+        claims.removeAll()
+        movementClaims.removeAll()
+        wheelClaim = nil
+        horizontalClaim = nil
+        recoveryPending = recoveryURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+        onDisconnect()
+        onStatus("Mouse device disconnected; waiting for reconnection")
+    }
+
+    private func disconnectIfUnavailable(_ c: Connection) async {
+        guard connection == c, !recoveryPending,
+            !claimed || recoveryURL.map({ FileManager.default.fileExists(atPath: $0.path) }) == true
+        else { return }
+        do {
+            _ = try await request(c.endpoint, c.slot, 0, 1, [0, 0, 0xA7])
+        } catch MouseError.hidpp1(let code) where code == 0x04 || code == 0x09 {
+            if connection == c { disconnect() }
+        } catch {}
     }
 
     private func received(_ bytes: [UInt8], endpoint: UInt) {
@@ -448,8 +498,9 @@ package final class BoltMouse {
         }) {
             pending.removeValue(forKey: p.id)
             if let error {
-                p.continuation.resume(
-                    throwing: MouseError.message(String(format: "HID++ error 0x%02X", error.code)))
+                let failure = packet.feature == 0x8F
+                    ? MouseError.hidpp1(error.code) : MouseError.hidpp2(error.code)
+                p.continuation.resume(throwing: failure)
             } else {
                 p.continuation.resume(returning: packet)
             }
@@ -483,12 +534,12 @@ package final class BoltMouse {
         _ function: UInt8, _ payload: [UInt8] = []
     ) async throws -> HIDPacket {
         try Task.checkCancellation()
-        guard let device = devices[endpoint] else { throw MouseError.message("Receiver unavailable") }
+        guard let device = devices[endpoint] else { throw MouseError.message("Mouse device unavailable") }
         let softwareID = nextSoftwareID
         nextSoftwareID = nextSoftwareID == 14 ? 8 : nextSoftwareID + 1
         let bytes = HIDPacket.request(
             device: slot, feature: feature, function: function,
-            softwareID: softwareID, payload: payload)
+            softwareID: softwareID, payload: payload, longReport: isBluetooth(device))
         let id = UUID()
         let response: HIDPacket = try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
@@ -519,7 +570,7 @@ package final class BoltMouse {
     }
 }
 
-extension BoltMouse {
+extension LogitechMouse {
     private func claimWheel(_ mode: WheelMode, _ c: Connection) async throws {
         let wheel = try await feature(0x2121, c.endpoint, c.slot)
         let shift = try await feature(0x2110, c.endpoint, c.slot)
@@ -593,7 +644,8 @@ extension BoltMouse {
         _ device: IOHIDDevice, _ c: Connection, feature: UInt8, function: UInt8, payload: [UInt8]
     ) -> Bool {
         let bytes = HIDPacket.request(
-            device: c.slot, feature: feature, function: function, softwareID: 15, payload: payload)
+            device: c.slot, feature: feature, function: function, softwareID: 15, payload: payload,
+            longReport: isBluetooth(device))
         return bytes.withUnsafeBufferPointer {
             IOHIDDeviceSetReport(
                 device, kIOHIDReportTypeOutput, CFIndex(bytes[0]), $0.baseAddress!, bytes.count)
@@ -602,7 +654,7 @@ extension BoltMouse {
     }
 }
 
-extension BoltMouse {
+extension LogitechMouse {
     private func readHorizontal(_ c: Connection, feature: UInt8) async throws -> ThumbWheelReporting {
         let response = try await request(c.endpoint, c.slot, feature, 1)
         guard let state = ThumbWheelReporting(response.payload) else {
@@ -651,9 +703,10 @@ extension BoltMouse {
     }
 }
 
-extension BoltMouse {
+extension LogitechMouse {
     private struct Recovery: Codable {
         var slot: UInt8
+        var unitID: UInt32?
         var controls: [UInt16]
         var wheel: WheelClaim?
         var horizontalOriginal: [UInt8]?
@@ -670,7 +723,8 @@ extension BoltMouse {
             return
         }
         let recovery = Recovery(
-            slot: c.slot, controls: claims.keys.map(\.rawValue), wheel: wheelClaim,
+            slot: c.slot, unitID: c.unitID == 0 ? nil : c.unitID,
+            controls: claims.keys.map(\.rawValue), wheel: wheelClaim,
             horizontalOriginal: horizontalClaim?.original.bytes,
             horizontalInverted: horizontalClaim?.inverted)
         try FileManager.default.createDirectory(
@@ -693,8 +747,9 @@ extension BoltMouse {
         guard saved.controls.count <= MouseControl.allCases.count,
             Set(saved.controls).count == saved.controls.count
         else { throw MouseError.message("Invalid saved mouse controls") }
-        guard saved.slot == c.slot else {
-            throw MouseError.message("Interrupted session belongs to another Bolt slot")
+        let sameMouse = saved.unitID.map { $0 != 0 && $0 == c.unitID } ?? (saved.slot == c.slot)
+        guard sameMouse else {
+            throw MouseError.message("Interrupted session belongs to another mouse or connection")
         }
         var recoveredClaims: [MouseControl: ControlReporting] = [:]
         var recoveredWheel: WheelClaim?

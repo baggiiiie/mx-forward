@@ -105,7 +105,7 @@ private enum HardwareChecks {
         try FileManager.default.createDirectory(at: recoveryDirectory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: recoveryDirectory) }
         let recoveryURL = recoveryDirectory.appendingPathComponent("hardware-restore.json")
-        let mouse = BoltMouse(recoveryURL: recoveryURL)
+        let mouse = LogitechMouse(recoveryURL: recoveryURL)
         var discoveryLog: [String] = []
         mouse.onLog = { discoveryLog.append($0) }
         mouse.onStatus = { discoveryLog.append($0) }
@@ -153,7 +153,29 @@ private enum HardwareChecks {
             try require(
                 FileManager.default.fileExists(atPath: recoveryURL.path),
                 "Unconfirmed restoration removed its recovery journal")
-            let recovered = BoltMouse(recoveryURL: recoveryURL)
+            if let connection = mouse.connection, connection.unitID != 0 {
+                guard var journal = try JSONSerialization.jsonObject(with: Data(contentsOf: recoveryURL))
+                    as? [String: Any]
+                else { throw MouseError.message("Invalid recovery journal") }
+                try require(
+                    (journal["unitID"] as? NSNumber)?.uint32Value == connection.unitID,
+                    "Recovery journal lost the mouse identity")
+                journal["unitID"] = connection.unitID == 1 ? 2 : 1
+                let mismatched = try JSONSerialization.data(withJSONObject: journal)
+                try mismatched.write(to: recoveryURL, options: .atomic)
+                let rejected = LogitechMouse(recoveryURL: recoveryURL)
+                try rejected.start()
+                try await waitFor { rejected.connection != nil && !rejected.isDiscovering }
+                try require(
+                    rejected.recoveryPending && !rejected.claimed
+                        && (try Data(contentsOf: recoveryURL)) == mismatched,
+                    "Recovery accepted or changed another mouse's settings")
+                await rejected.stopDiscovery()
+                journal["unitID"] = connection.unitID
+                journal["slot"] = connection.slot == 0xFF ? 1 : 0xFF
+                try JSONSerialization.data(withJSONObject: journal).write(to: recoveryURL, options: .atomic)
+            }
+            let recovered = LogitechMouse(recoveryURL: recoveryURL)
             try recovered.start()
             try await waitFor {
                 recovered.rescan()
@@ -161,7 +183,7 @@ private enum HardwareChecks {
                     && !FileManager.default.fileExists(atPath: recoveryURL.path)
             }
             try require(!recovered.claimed, "Recovery left native controls claimed")
-            print("PASS: a new controller verifies/restores an interrupted session's recovery journal")
+            print("PASS: recovery rejects another mouse and restores the same mouse at a new address")
         } catch {
             try? await mouse.release()
             throw error
@@ -174,7 +196,7 @@ private enum HardwareChecks {
         preferences.testMode = true
         preferences.resumeMappings = true
         preferences.save()
-        let inputMouse = BoltMouse()
+        let inputMouse = LogitechMouse()
         let model = MouseEngine(mouse: inputMouse)
         var hardwareEvents: [String] = []
         let logToModel = inputMouse.onLog

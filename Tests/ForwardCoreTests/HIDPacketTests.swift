@@ -24,6 +24,24 @@ final class HIDPacketTests {
         expectEqual(Array(bytes.prefix(9)), [0x11, 1, 12, 0x39, 0, 86, 0x2B, 0, 86])
         expectEqual(HIDPacket.parse(bytes)?.function, 3)
     }
+    func testBluetoothUsesLongReportsAndDirectAddress() {
+        let ping = HIDPacket.request(
+            device: 0xFF, feature: 0, function: 1, softwareID: 8,
+            payload: [0, 0, 0xA7], longReport: true)
+        expectEqual(ping.count, 20)
+        expectEqual(Array(ping.prefix(7)), [0x11, 0xFF, 0, 0x18, 0, 0, 0xA7])
+        expectEqual(HIDPacket.parse(ping)?.device, 0xFF)
+        expectNil(HIDPacket.parse(ping)?.error)
+        let restore = HIDPacket.request(
+            device: 0xFF, feature: 12, function: 3, softwareID: 15,
+            payload: [0, 86, 0], longReport: true)
+        expectEqual(restore.count, 20)
+        expectEqual(HIDPacket.parse(restore)?.address, 0x3F)
+        let notification = HIDPacket.parse(
+            [0x11, 0xFF, 12, 0, 0, 86] + Array(repeating: 0, count: 14))!
+        expectEqual(notification.pressedControls, [86])
+        expectEqual(notification.softwareID, 0)
+    }
     func testTruncatedAndUnknownReportsRejected() {
         expectNil(HIDPacket.parse([]))
         expectNil(HIDPacket.parse([0x10, 1, 2, 0, 0, 86]))

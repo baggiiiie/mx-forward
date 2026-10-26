@@ -17,10 +17,10 @@ public struct HIDPacket: Equatable {
 
     public static func request(
         device: UInt8, feature: UInt8, function: UInt8,
-        softwareID: UInt8, payload: [UInt8]
+        softwareID: UInt8, payload: [UInt8], longReport: Bool = false
     ) -> [UInt8] {
         precondition(payload.count <= 16 && function < 16 && softwareID > 0 && softwareID < 16)
-        var bytes = [UInt8](repeating: 0, count: payload.count > 3 ? 20 : 7)
+        var bytes = [UInt8](repeating: 0, count: longReport || payload.count > 3 ? 20 : 7)
         bytes[0] = bytes.count == 20 ? 0x11 : 0x10
         bytes[1] = device
         bytes[2] = feature

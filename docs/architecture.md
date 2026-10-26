@@ -2,7 +2,7 @@
 
 ## What runs where
 
-- **MXForwardAgent** owns the Bolt receiver, mouse actions, settings, and native menu bar. It uses AppKit but not SwiftUI.
+- **MXForwardAgent** owns the Bluetooth mouse or Bolt receiver, mouse actions, settings, and native menu bar. It uses AppKit but not SwiftUI.
 - **MXForward** is the SwiftUI settings window. Closing it saves pending edits and exits the UI process, leaving mappings running. If saving fails, quitting is cancelled so the edits aren't lost.
 - **MouseEngine** handles HID, gestures, configuration, and event output. **ForwardCore** holds packet parsing and gesture calculations.
 - **AgentSupport** handles XPC and login startup. **SettingsClient** holds the UI's connection and editable state. Test programs are separate targets and aren't shipped in the app.
@@ -35,7 +35,7 @@ Before changing hardware, the agent saves native settings in `~/.config/mx-forwa
 
 On reconnect, recovery finishes before controls can be claimed. The reconnect timer doesn't cancel an active recovery. Shutdown cancels discovery, stops monitoring and unfinished input, waits for hardware work, and restores controls. launchd allows 30 seconds for exit.
 
-If recovery fails, the file is kept for another attempt. Power-cycle an unresponsive mouse. Recovery checks the Bolt slot; changing receiver slots during an interrupted session may require inspecting the recovery file. Don't edit or delete it while the agent owns the mouse.
+If recovery fails, the file is kept for another attempt. Power-cycle an unresponsive mouse. Recovery checks the mouse unit ID across Bluetooth and Bolt connections. Older recovery files check the original connection address. Don't edit or delete it while the agent owns the mouse.
 
 ## Building and testing
 
@@ -55,7 +55,7 @@ swift run ProxyChecks
 
 These check core behavior, message limits, cancellation and reconnection, concurrent settings edits, in-flight Undo, failed saves, recording cleanup, config reloads, file locks, shutdown, and launchd restart. The launchd test kills only its own hardware-disabled process under a temporary service name. It doesn't touch the installed agent or production preferences. Signing checks build two different versions of a temporary app and nested helper, verify that their code hashes differ but their designated requirements match, and check that an ad-hoc replacement is rejected. The temporary apps never run and no permission grants are changed.
 
-With the UI closed, both agents stopped, and an awake Bolt mouse:
+With the UI closed, both agents stopped, and an awake mouse connected over Bluetooth or Bolt:
 
 ```sh
 ./scripts/check-hardware.sh

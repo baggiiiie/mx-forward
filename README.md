@@ -1,6 +1,8 @@
 # MX Forward
 
-A small native macOS app that remaps the MX Master 3S via a **Logi Bolt USB receiver** (not bluetooth yet), with no Logitech runtime dependency.
+A small native macOS app that remaps the MX Master 3S via **Bluetooth or a Logi Bolt USB receiver**, with no Logitech runtime dependency.
+
+Pair the mouse in macOS Bluetooth settings, or plug in its paired Bolt receiver. MX Forward discovers the connection automatically and uses the same mappings for both.
 
 A lightweight agent owns the mouse and menu bar; the settings UI is a separate process. Everything is also editable as JSON at `~/.config/mx-forward/config.json`.
 
